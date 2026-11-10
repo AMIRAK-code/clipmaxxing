@@ -1,0 +1,31 @@
+{
+  "name": "@klipz/video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "studio": "remotion studio src/entry.ts"
+  },
+  "dependencies": {
+    "@klipz/shared": "*",
+    "remotion": "4.0.542",
+    "@remotion/bundler": "4.0.542",
+    "@remotion/renderer": "4.0.542",
+    "@remotion/cli": "4.0.542",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@fontsource/montserrat": "^5.1.0",
+    "@fontsource/poppins": "^5.1.0",
+    "@fontsource/inter": "^5.1.0",
+    "@fontsource/archivo-black": "^5.1.0",
+    "@fontsource/bangers": "^5.1.0",
+    "@fontsource/anton": "^5.1.0",
+    "@fontsource/bebas-neue": "^5.1.0"
+  }
+}

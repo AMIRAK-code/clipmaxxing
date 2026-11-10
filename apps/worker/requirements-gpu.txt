@@ -1,0 +1,6 @@
+# Optional: GPU transcription + diarization. Install after requirements.txt.
+#   pip install -r requirements-gpu.txt
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10
+# WhisperX adds forced alignment + pyannote diarization (needs HF_TOKEN):
+# whisperx>=3.3

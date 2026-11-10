@@ -1,0 +1,27 @@
+{
+  "name": "klipz",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @klipz/web",
+    "build": "npm run build -w @klipz/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:worker": "cd apps/worker && .venv/Scripts/python -m pytest -q",
+    "cron": "node scripts/dev-cron.mjs",
+    "worker": "cd apps/worker && .venv/Scripts/python -m klipz_worker.main",
+    "seed": "node scripts/seed.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
