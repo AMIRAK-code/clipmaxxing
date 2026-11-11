@@ -1,7 +1,7 @@
 "use client";
 
 import type { Clip, Render } from "@klipz/shared";
-import { Check, Download, Pencil, RotateCcw, X } from "lucide-react";
+import { Check, Download, Pencil, RotateCcw, Send, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/primitives";
@@ -130,6 +130,15 @@ function RenderBadge({ render, clip }: { render: Render; clip: Clip }) {
         {render.status === "ready" ? "Rendered" : render.status === "failed" ? "Render failed" : render.status === "rendering" ? "Rendering…" : "Render queued"}
       </Badge>
       {outdated ? <Badge tone="warn">Outdated</Badge> : null}
+      {render.status === "ready" ? (
+        <Link
+          href={`/compose/${clip.id}`}
+          data-testid="clip-post"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-white hover:bg-accent-2"
+        >
+          <Send className="h-3.5 w-3.5" aria-hidden /> Post
+        </Link>
+      ) : null}
       {render.status === "ready" && url ? (
         <a
           href={`${url}?download`}
