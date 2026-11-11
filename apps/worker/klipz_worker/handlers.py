@@ -23,7 +23,7 @@ def build_handlers() -> dict[str, Handler]:
         "analyze": handle_analyze,
     }
     # Optional handlers from later tracks: any module exposing HANDLERS = {type: fn}.
-    for mod in ("reframe", "render", "autoclip"):
+    for mod in ("reframe", "render", "autoclip", "voiceover", "cleanup"):
         try:
             m = __import__(f"klipz_worker.steps.{mod}", fromlist=["HANDLERS"])
             handlers.update(getattr(m, "HANDLERS", {}))
