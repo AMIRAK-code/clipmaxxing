@@ -82,3 +82,8 @@ export function workerHeartbeat(): { alive: boolean; lastSeen: string | null } {
   if (!r) return { alive: false, lastSeen: null };
   return { alive: Date.now() - Date.parse(r.value) < 15_000, lastSeen: r.value };
 }
+
+/** Delete a job row that is no longer queued or running. */
+export function deleteFinishedJob(id: string): boolean {
+  return run("delete from jobs where id = ? and status not in ('queued','running')", id).changes > 0;
+}

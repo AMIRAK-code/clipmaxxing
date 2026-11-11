@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { body, HttpError, notFound, ok, route } from "@/server/http";
-import { cancelJob, getJob, retryJob } from "@/server/jobs";
+import { cancelJob, deleteFinishedJob, getJob, retryJob } from "@/server/jobs";
 
 export const dynamic = "force-dynamic";
 
@@ -12,4 +12,13 @@ export const POST = route<{ id: string }>(async (req, { id }) => {
   const changed = action === "retry" ? retryJob(id) : cancelJob(id);
   if (!changed) throw new HttpError(409, `Job cannot be ${action === "retry" ? "retried" : "cancelled"} in its current state`);
   return ok({ job: getJob(id) });
+});
+
+/** Remove a failed/dead/cancelled/finished job row (dead-letter queue "Delete"). Queued and running jobs must be cancelled first. */
+export const DELETE = route<{ id: string }>((_req, { id }) => {
+  if (!deleteFinishedJob(id)) {
+    if (!getJob(id)) notFound();
+    throw new HttpError(409, "Only finished jobs can be deleted; cancel it first");
+  }
+  return ok({ deleted: true });
 });

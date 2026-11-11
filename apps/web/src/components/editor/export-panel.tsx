@@ -1,7 +1,7 @@
 "use client";
 
 import type { Job } from "@klipz/shared";
-import { AlertTriangle, Check, Download, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Check, Download, Loader2, RefreshCw, Send, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge, Progress, Switch } from "@/components/ui/primitives";
@@ -86,6 +86,7 @@ export function ExportPanel({ initialRenders, initialJobs }: { initialRenders: R
       {latest ? (
         <RenderCard
           key={latest.id}
+          clipId={ctx.clip.id}
           render={latest}
           job={jobFor(latest)}
           outdated={latest.edit_version !== version || unsaved}
@@ -117,7 +118,7 @@ export function ExportPanel({ initialRenders, initialJobs }: { initialRenders: R
   );
 }
 
-function RenderCard({ render, job, outdated, onRetry }: { render: RenderView; job: Job | undefined; outdated: boolean; onRetry: () => void }) {
+function RenderCard({ clipId, render, job, outdated, onRetry }: { clipId: string; render: RenderView; job: Job | undefined; outdated: boolean; onRetry: () => void }) {
   const url = fileUrl(render.storage_key);
   return (
     <Section
@@ -161,6 +162,13 @@ function RenderCard({ render, job, outdated, onRetry }: { render: RenderView; jo
             data-testid="render-download"
           >
             <Download className="h-4 w-4" aria-hidden /> Download MP4
+          </a>
+          <a
+            href={`/compose/${clipId}`}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-line px-4 text-sm font-semibold hover:bg-panel-2"
+            data-testid="render-post"
+          >
+            <Send className="h-4 w-4" aria-hidden /> Post to social accounts
           </a>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <Fact k="Duration" v={formatDuration(render.duration_sec)} />
