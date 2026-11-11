@@ -40,6 +40,19 @@ afterAll(() => {
 
 const edit = { version: 1 as const, video: [] };
 
+describe("createRender atomicity", () => {
+  it("rolls the render row back when the job cannot be enqueued", () => {
+    const { clipId } = fresh();
+    applyClipPatch(clipId, { edit_state: edit, expected_version: 0 });
+    run("create trigger no_jobs before insert on jobs begin select raise(abort, 'no jobs'); end");
+    expect(() => createRender(clipId)).toThrow();
+    run("drop trigger no_jobs");
+    expect(get<{ n: number }>("select count(*) n from renders where clip_id = ?", clipId)!.n).toBe(0);
+    const ok = createRender(clipId);
+    expect(ok.job).not.toBeNull();
+  });
+});
+
 describe("createRender", () => {
   it("creates a queued render stamped with the clip's edit_version and a render job", () => {
     const { clipId, projectId } = fresh();

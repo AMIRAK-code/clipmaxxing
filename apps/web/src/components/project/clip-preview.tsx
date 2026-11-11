@@ -18,7 +18,9 @@ export function ClipPreview({ clip, source, words }: { clip: Clip; source: Sourc
   const src = source?.status === "ready" ? fileUrl(source.storage_key) : null;
   const srcW = clip.crop_track?.srcW ?? source?.width ?? 1920;
   const srcH = clip.crop_track?.srcH ?? source?.height ?? 1080;
+  const bgScale = Math.max(OUT_W / srcW, OUT_H / srcH); // cover-scale of the blurred backdrop (same as the renderer)
   const vids = useRef<(HTMLVideoElement | null)[]>([]);
+  const bgVid = useRef<HTMLVideoElement | null>(null);
   const [time, setTime] = useState(clip.start_sec);
   const [playing, setPlaying] = useState(false);
   const [layout, setLayout] = useState<FrameLayout>(() => layoutAt(clip.crop_track, clip.start_sec, OUT_W, OUT_H, srcW, srcH));
@@ -41,6 +43,12 @@ export function ClipPreview({ clip, source, words }: { clip: Clip; source: Sourc
     if (key !== layoutKey.current) {
       layoutKey.current = key;
       setLayout(next);
+    }
+    // blurred letterbox background: a muted copy kept in step with the main video
+    const bg = bgVid.current;
+    if (bg) {
+      if (Math.abs(bg.currentTime - t) > 0.15) bg.currentTime = t;
+      if (v.paused !== bg.paused) void (v.paused ? bg.pause() : bg.play().catch(() => undefined));
     }
     // extra panes (split layout) show the same moment, muted
     for (let i = 1; i < next.panes.length; i++) {
@@ -73,6 +81,7 @@ export function ClipPreview({ clip, source, words }: { clip: Clip; source: Sourc
   function seek(t: number) {
     const tt = Math.min(Math.max(t, clip.start_sec), clip.end_sec - 0.02);
     for (const v of vids.current) if (v) v.currentTime = tt;
+    if (bgVid.current) bgVid.current.currentTime = tt;
     setTime(tt);
   }
 
@@ -103,7 +112,31 @@ export function ClipPreview({ clip, source, words }: { clip: Clip; source: Sourc
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="relative aspect-[9/16] w-full max-w-[280px] overflow-hidden rounded-xl border border-line bg-black">
+      <div className="relative aspect-[9/16] w-full max-w-[280px] overflow-hidden rounded-xl border border-line bg-black" style={{ containerType: "inline-size" }} data-layout={layout.layout}>
+        {layout.blurredBackground ? (
+          <div className="absolute inset-0 overflow-hidden" style={{ filter: "blur(3.33cqw) brightness(0.55)", transform: "scale(1.15)" }} aria-hidden data-testid="letterbox-bg">
+            <video
+              ref={bgVid}
+              src={src}
+              muted
+              playsInline
+              preload="auto"
+              tabIndex={-1}
+              className="absolute"
+              style={{
+                maxWidth: "none",
+                width: `${((srcW * bgScale) / OUT_W) * 100}%`,
+                height: `${((srcH * bgScale) / OUT_H) * 100}%`,
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+              }}
+              onLoadedMetadata={(e) => {
+                e.currentTarget.currentTime = live.current.start;
+              }}
+            />
+          </div>
+        ) : null}
         {layout.panes.map((p, i) => {
           const st = paneVideoStyle(p, srcW, srcH);
           return (

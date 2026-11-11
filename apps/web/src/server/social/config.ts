@@ -75,7 +75,14 @@ function extras(provider: Provider, env: Env): Record<string, string> {
     set("linkedinVersion", env.LINKEDIN_VERSION);
     set("linkedinScopes", env.LINKEDIN_EXTRA_SCOPES);
   }
-  if (provider === "tiktok") set("tiktokSource", env.TIKTOK_SOURCE);
+  if (provider === "tiktok") {
+    set("tiktokSource", env.TIKTOK_SOURCE);
+    if (env.TIKTOK_AUDITED?.trim().toLowerCase() === "true") out.tiktokAudited = "true";
+  }
+  // "buffer" forces the one-shot in-memory upload instead of streaming (Meta adapters and the aggregator read it).
+  if ((provider === "instagram" || provider === "facebook" || routedViaAggregator(provider, env)) && env.KLIPZ_UPLOAD_MODE?.trim().toLowerCase() === "buffer") {
+    out.uploadMode = "buffer";
+  }
   set("pollMaxAttempts", env.KLIPZ_POLL_MAX_ATTEMPTS);
   return out;
 }

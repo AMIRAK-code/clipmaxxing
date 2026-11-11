@@ -3,6 +3,8 @@ import path from "node:path";
 import { HttpError } from "./http";
 
 export const MAX_ASSET_BYTES = 500 * 1024 * 1024;
+/** multipart bodies are parsed in memory by the platform, so they are capped small; big files use the raw streaming path */
+export const MAX_MULTIPART_BYTES = 8 * 1024 * 1024;
 
 export type AssetKind = "video" | "image" | "audio";
 

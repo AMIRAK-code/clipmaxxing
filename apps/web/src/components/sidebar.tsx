@@ -47,7 +47,7 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="border-t border-line p-3 text-xs text-muted" title={workerAlive ? "Worker is running" : "Start the worker: npm run worker"}>
+      <div className="border-t border-line p-3 text-xs text-muted" title={workerAlive ? "Worker is running" : "Start KLIPZ with npm start (worker alone: npm run worker)"}>
         <div className="flex items-center gap-2">
           <span className={cn("h-2 w-2 shrink-0 rounded-full", workerAlive ? "bg-good" : workerAlive === false ? "bg-bad" : "bg-line")} />
           {!compact && (

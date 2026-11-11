@@ -8,14 +8,16 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @klipz/web",
+    "start": "node scripts/start.mjs",
+    "klipz": "node scripts/start.mjs",
     "build": "npm run build -w @klipz/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:worker": "node scripts/worker.mjs test",
-    "cron": "node scripts/dev-cron.mjs",
     "worker": "node scripts/worker.mjs",
     "seed": "node scripts/seed.mjs",
-    "fonts": "node scripts/copy-fonts.mjs"
+    "fonts": "node scripts/copy-fonts.mjs",
+    "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/project/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { Badge, Card, Input } from "@/components/ui/primitives";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { JOB_LABEL } from "@/hooks/use-jobs";
 import { api, cn, formatBytes } from "@/lib/utils";
 import type { SystemStatus } from "@/server/data-admin";
@@ -100,7 +101,7 @@ export function SettingsView() {
                 </span>
               ) : (
                 <span className="ml-2 text-muted">
-                  Start it with <code className="rounded bg-panel-2 px-1">npm run worker</code>. {s.worker.error ? `(${s.worker.error})` : ""}
+                  Start KLIPZ with <code className="rounded bg-panel-2 px-1">npm start</code> (or double-click <code className="rounded bg-panel-2 px-1">start-klipz.bat</code>); the worker alone: <code className="rounded bg-panel-2 px-1">npm run worker</code>. {s.worker.error ? `(${s.worker.error})` : ""}
                 </span>
               )}
               {s.worker.handlers.length > 0 ? (
@@ -151,7 +152,7 @@ export function SettingsView() {
                   </li>
                 ))}
               </ul>
-              <p className="mt-1 text-xs text-muted">Only whether a key exists is shown, never its value. Put keys in <code className="rounded bg-panel-2 px-1">.env.local</code> (worker) and <code className="rounded bg-panel-2 px-1">apps/web/.env.local</code> (web).</p>
+              <p className="mt-1 text-xs text-muted">Only whether a key exists is shown, never its value. Put keys in <code className="rounded bg-panel-2 px-1">.env.local</code> at the repo root (read by web and worker); <code className="rounded bg-panel-2 px-1">apps/web/.env.local</code> also works for the web app and wins.</p>
             </dd>
           </dl>
         </Card>
@@ -291,6 +292,8 @@ export function SettingsView() {
 function TypedConfirm({ open, busy, onConfirm, onCancel }: { open: boolean; busy: boolean; onConfirm: () => void; onCancel: () => void }) {
   const [text, setText] = useState("");
   const ref = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  useFocusTrap(formRef, open);
   const cancelRef = useRef(onCancel);
   cancelRef.current = onCancel;
   useEffect(() => {
@@ -306,6 +309,7 @@ function TypedConfirm({ open, busy, onConfirm, onCancel }: { open: boolean; busy
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
       <form
+        ref={formRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="wipe-title"

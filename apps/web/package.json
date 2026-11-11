@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 127.0.0.1 -p 3000",
+    "dev": "node scripts/next-port.mjs dev",
     "build": "next build",
-    "start": "next start -H 127.0.0.1 -p 3000",
+    "start": "node scripts/next-port.mjs start",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

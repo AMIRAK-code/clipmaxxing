@@ -75,6 +75,31 @@ export function Preview() {
 const PlayerView = memo(function PlayerView({ inputProps, frames, loop }: { inputProps: ClipProps; frames: number; loop: boolean }) {
   const ctx = useEditorCtx();
   const ref = ctx.playerRef;
+  const wrap = useRef<HTMLDivElement>(null);
+
+  // First frame: the Player renders frame 0 before the <video> has data, which leaves a black preview until
+  // the first play. Preload the media and re-render the current frame once each video has its first frame.
+  useEffect(() => {
+    const root = wrap.current;
+    if (!root) return;
+    const nudged = new WeakSet<HTMLVideoElement>();
+    let tries = 0;
+    const scan = () => {
+      root.querySelectorAll("video").forEach((v) => {
+        if (v.preload !== "auto") v.preload = "auto";
+        if (v.readyState >= 2 && !nudged.has(v)) {
+          nudged.add(v);
+          const p = ref.current;
+          if (p && !p.isPlaying()) p.seekTo(p.getCurrentFrame());
+        }
+      });
+      if (++tries > 40) clearInterval(timer);
+    };
+    const timer = setInterval(scan, 150);
+    scan();
+    return () => clearInterval(timer);
+  }, [ref, inputProps.sourceUrl]);
+
   useEffect(() => {
     const p = ref.current;
     if (!p) return;
@@ -94,6 +119,7 @@ const PlayerView = memo(function PlayerView({ inputProps, frames, loop }: { inpu
     };
   }, [ref, ctx.playhead, ctx.view]);
   return (
+    <div ref={wrap} className="h-full w-full">
     <Player
       ref={ref}
       component={ClipComposition}
@@ -110,6 +136,7 @@ const PlayerView = memo(function PlayerView({ inputProps, frames, loop }: { inpu
       acknowledgeRemotionLicense
       style={{ width: "100%", height: "100%" }}
     />
+    </div>
   );
 });
 

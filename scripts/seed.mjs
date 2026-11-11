@@ -215,7 +215,7 @@ function main() {
     }
     db.exec("COMMIT");
     console.log(`Seeded "${TITLE}" (project ${projectId}) in ${dataDir}`);
-    ids.forEach((id, i) => console.log(`  clip ${i + 1}: http://127.0.0.1:3000/clips/${id}`));
+    ids.forEach((id, i) => console.log(`  clip ${i + 1}: http://127.0.0.1:${process.env.KLIPZ_PORT || 3000}/clips/${id}`));
   } catch (e) {
     db.exec("ROLLBACK");
     throw e;

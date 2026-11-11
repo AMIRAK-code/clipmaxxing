@@ -1,10 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ensureBundle, pruneStale } from "../lib/bundle-cache.mjs";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "klipz-bundle-"));
+const created: string[] = [];
+const tmp = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "klipz-bundle-"));
+  created.push(dir);
+  return dir;
+};
+afterAll(() => {
+  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe("ensureBundle", () => {
   it("builds into a temp dir, moves it into place and reuses it", async () => {

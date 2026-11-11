@@ -332,3 +332,48 @@ describe("review fixes", () => {
     expect(getPost(p!.id)).toMatchObject({ status: "published", external_id: "e1", external_url: null });
   });
 });
+
+const lockOf = (id: string) => get<{ locked_at: string | null }>("select locked_at from posts where id = ?", id)!.locked_at;
+
+describe("lock heartbeat", () => {
+  it("keeps the lock fresh during a long upload so a concurrent tick does not reclaim it, and never publishes twice", async () => {
+    const x = addAccount("x");
+    const [p] = create([x.id]);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const publish = vi.fn(async () => {
+      await gate;
+      return { externalId: "slow-1", status: "published" as const };
+    });
+    const pub = fakePublisher("x", { publish });
+    let clock = T0;
+    const beat: EngineDeps = { heartbeatMs: 5, clock: () => clock };
+    const first = processDuePosts(T0, deps({ x: pub }, beat));
+    // the upload has been running far longer than the lock TTL (fake clock), heartbeat must have refreshed locked_at
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    clock = at(LOCK_TTL_MS + 5 * MIN);
+    await vi.waitFor(() => expect(lockOf(p!.id)).toBe(clock.toISOString()));
+    const s2 = await processDuePosts(at(LOCK_TTL_MS + 6 * MIN), deps({ x: pub }));
+    expect(s2.reclaimed).toBe(0);
+    expect(getPost(p!.id)!.status).toBe("publishing");
+    release();
+    await first;
+    expect(getPost(p!.id)).toMatchObject({ status: "published", external_id: "slow-1", locked_at: null });
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops beating once publish returns (a crashed run is still reclaimed as uncertain)", async () => {
+    const x = addAccount("x");
+    const [p] = create([x.id]);
+    const pub = fakePublisher("x", { publish: async () => ({ externalId: "e", status: "published" as const }) });
+    const crash: EngineDeps = { heartbeatMs: 5, afterPublishCall: () => { throw new Error("boom"); } };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await processDuePosts(T0, deps({ x: pub }, crash));
+    spy.mockRestore();
+    const lockAfter = lockOf(p!.id);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(lockOf(p!.id)).toBe(lockAfter);
+    await processDuePosts(at(LOCK_TTL_MS + MIN), deps({ x: pub }));
+    expect(getPost(p!.id)).toMatchObject({ status: "failed", error_code: "uncertain_outcome" });
+  });
+});

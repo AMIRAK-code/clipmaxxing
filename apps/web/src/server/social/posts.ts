@@ -17,7 +17,7 @@ import { HttpError } from "../http";
 import { renderAssetOf } from "../renders";
 import { getAccount, getClip, getPost, getRender } from "../repo";
 import { accountInfoOf } from "./accounts";
-import { getPublisherFor } from "./publishers";
+import { getPublisherFor, validateFor } from "./publishers";
 
 const providerEnum = z.enum(PROVIDERS as [Provider, ...Provider[]]);
 const optionsRecord = z.record(z.string(), z.unknown());
@@ -109,7 +109,7 @@ export function planPosts(input: PostInput, deps: PlanDeps = {}): PostPlan {
     if (input.coverTimestampMs !== undefined) meta.coverTimestampMs = input.coverTimestampMs;
 
     const publisher = publisherFor(account.provider);
-    const issues = [...publisher.validate(asset, meta, accountInfoOf(account))];
+    const issues = [...validateFor(publisher, asset, meta, accountInfoOf(account))];
     if (fileMissing) issues.push({ field: "render", code: "file_missing", message: "The rendered video file is missing on disk. Re-render the clip.", severity: "error" });
     if (account.status !== "active") {
       issues.push({ field: "account", code: "needs_reconnect", message: `${account.display_name} needs to be reconnected before posting.`, severity: "error" });

@@ -136,7 +136,8 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
         <div role="alert" className="flex items-start gap-3 rounded-lg border border-warn/40 bg-warn/10 p-3 text-sm">
           <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
           <p>
-            The background worker isn&apos;t running, so nothing will be processed. Open a terminal in the project folder and run{" "}
+            The background worker isn&apos;t running, so nothing will be processed. Start KLIPZ with{" "}
+            <code className="rounded bg-panel-2 px-1.5 py-0.5 font-mono text-xs">npm start</code> (or double-click <code className="rounded bg-panel-2 px-1.5 py-0.5 font-mono text-xs">start-klipz.bat</code>); to run only the worker use{" "}
             <code className="rounded bg-panel-2 px-1.5 py-0.5 font-mono text-xs">npm run worker</code>.
           </p>
         </div>

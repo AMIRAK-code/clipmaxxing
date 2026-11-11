@@ -1,4 +1,4 @@
-import { HttpError } from "@/server/http";
+import { HttpError, ok, route } from "@/server/http";
 import { OAUTH_COOKIE, OAUTH_COOKIE_MAX_AGE, accountsRedirect, beginOAuth, parseProvider, safeMessage } from "@/server/social/oauth";
 
 export const dynamic = "force-dynamic";
@@ -24,3 +24,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ provider: stri
     return redirect(accountsRedirect({ error: msg }));
   }
 }
+
+/**
+ * Sandbox / aggregator connects create an account without a provider round trip, so they need a
+ * same-origin POST (the `route` wrapper rejects cross-site requests). Real OAuth still uses the GET redirect.
+ */
+export const POST = route<{ provider: string }>(async (_req, { provider: raw }) => {
+  const provider = parseProvider(raw);
+  const r = await beginOAuth(provider, { allowCreate: true });
+  return ok({ redirectTo: r.redirectTo });
+});

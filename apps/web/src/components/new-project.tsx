@@ -102,6 +102,8 @@ export function NewProject() {
           <input
             ref={input}
             type="file"
+            aria-label="Choose a video file to upload"
+            tabIndex={-1}
             accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.m4v,.avi"
             className="hidden"
             onChange={(e) => void startUpload(e.target.files?.[0])}

@@ -44,9 +44,10 @@ export function AccountsView() {
     if (announced.current) return;
     const connected = params.get("connected");
     const error = params.get("error");
-    if (!connected && !error) return;
+    if (!connected && !error && !params.get("connect")) return;
     announced.current = true;
     if (error) toast("error", `Connection failed: ${error}`);
+    else if (params.get("connect")) toast("info", "Use the Connect button on this page to add that account.");
     else {
       const n = Number(params.get("n") ?? "1") || 1;
       toast("success", `${PROVIDER_META[connected as Provider]?.label ?? connected} connected (${n} account${n === 1 ? "" : "s"}).`);
@@ -62,6 +63,20 @@ export function AccountsView() {
       toast("success", `Sandbox ${PROVIDER_META[provider].label} account added.`);
     } catch (e) {
       toast("error", e instanceof Error ? e.message : "Could not add sandbox account");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Sandbox / aggregator connects create the account server-side, so they are a same-origin POST, never a link. */
+  const connectViaPost = async (provider: Provider) => {
+    setBusy(`connect:${provider}`);
+    try {
+      await api(`/api/oauth/${provider}/start`, { method: "POST", json: {} });
+      await load();
+      toast("success", `${PROVIDER_META[provider].label} connected.`);
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Could not connect");
     } finally {
       setBusy(null);
     }
@@ -123,6 +138,7 @@ export function AccountsView() {
               data={data}
               busy={busy}
               onSandbox={() => void addSandbox(p)}
+              onConnectPost={() => void connectViaPost(p)}
               onDisconnect={(a) => setConfirm(a)}
             />
           ))}
@@ -149,12 +165,14 @@ function ProviderCard({
   data,
   busy,
   onSandbox,
+  onConnectPost,
   onDisconnect,
 }: {
   provider: Provider;
   data: AccountsResponse;
   busy: string | null;
   onSandbox: () => void;
+  onConnectPost: () => void;
   onDisconnect: (a: SocialAccount) => void;
 }) {
   const meta = PROVIDER_META[provider];
@@ -173,7 +191,11 @@ function ProviderCard({
               <FlaskConical className="h-3.5 w-3.5" aria-hidden /> Add sandbox account
             </Button>
           ) : null}
-          {status.configured ? (
+          {status.configured && (data.sandbox || status.viaAggregator) ? (
+            <Button size="sm" onClick={onConnectPost} disabled={busy === `connect:${provider}`} data-testid={`connect-${provider}`}>
+              <Plug className="h-3.5 w-3.5" aria-hidden /> {accounts.length ? "Connect another" : "Connect"}
+            </Button>
+          ) : status.configured ? (
             <a href={startHref} className={cn(linkBtn, "bg-accent text-white hover:bg-accent-2")} data-testid={`connect-${provider}`}>
               <Plug className="h-3.5 w-3.5" aria-hidden /> {accounts.length ? "Connect another" : "Connect"}
             </a>
@@ -203,7 +225,7 @@ function ProviderCard({
       ) : (
         <ul className="flex flex-col gap-2">
           {accounts.map((a) => (
-            <AccountRow key={a.id} account={a} reconnectHref={startHref} reconnectable={status.configured || data.sandbox} busy={busy === `disc:${a.id}`} onDisconnect={() => onDisconnect(a)} />
+            <AccountRow key={a.id} account={a} reconnectHref={startHref} onReconnectPost={data.sandbox || status.viaAggregator ? onConnectPost : undefined} reconnectable={status.configured || data.sandbox} busy={busy === `disc:${a.id}`} onDisconnect={() => onDisconnect(a)} />
           ))}
         </ul>
       )}
@@ -222,12 +244,14 @@ function expiryText(a: SocialAccount): string {
 function AccountRow({
   account: a,
   reconnectHref,
+  onReconnectPost,
   reconnectable,
   busy,
   onDisconnect,
 }: {
   account: SocialAccount;
   reconnectHref: string;
+  onReconnectPost?: (() => void) | undefined;
   reconnectable: boolean;
   busy: boolean;
   onDisconnect: () => void;
@@ -265,7 +289,11 @@ function AccountRow({
         </div>
       ) : null}
       <div className="mt-2 flex flex-wrap justify-end gap-2">
-        {bad && reconnectable ? (
+        {bad && reconnectable && onReconnectPost ? (
+          <Button size="sm" variant="secondary" onClick={onReconnectPost} data-testid={`reconnect-${a.id}`}>
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Reconnect
+          </Button>
+        ) : bad && reconnectable ? (
           <a href={reconnectHref} className={cn(linkBtn, "bg-warn/15 text-warn border border-warn/30 hover:bg-warn/25")} data-testid={`reconnect-${a.id}`}>
             <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Reconnect
           </a>

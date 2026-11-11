@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { actionBlockReason, filterClips, rankClips, scoreTone, scorerLabel } from "./clip-ui";
-import { moveEdge, nudgeStep, snapToBoundary, wordBoundaries } from "./trim";
+import { followWindow, initialWindow, moveEdge, nudgeStep, snapToBoundary, wordBoundaries } from "./trim";
 
 const words = [
   { w: "a", s: 1.0, e: 1.4 },
@@ -75,5 +75,30 @@ describe("clip ui helpers", () => {
     expect(actionBlockReason(ready, [job("running")], "analyze")).toMatch(/Already/);
     expect(actionBlockReason(ready, [job("running")], "autoclip")).toBeNull();
     expect(actionBlockReason(ready, [job("failed")], "analyze")).toBeNull();
+  });
+});
+
+describe("trim window follows the handles", () => {
+  it("starts +-15 s around the clip, clamped to the source", () => {
+    expect(initialWindow(40, 60, 300)).toEqual({ lo: 25, hi: 75 });
+    expect(initialWindow(5, 20, 30)).toEqual({ lo: 0, hi: 30 });
+  });
+  it("keeps the window while the handles are well inside it", () => {
+    const w = { lo: 25, hi: 75 };
+    expect(followWindow(w, 30, 70, 300)).toBe(w);
+  });
+  it("grows past the end by 15 s when the end handle reaches the window edge", () => {
+    expect(followWindow({ lo: 25, hi: 75 }, 40, 75, 300)).toEqual({ lo: 25, hi: 90 });
+  });
+  it("grows before the start (not below 0) when the start handle reaches the left edge", () => {
+    expect(followWindow({ lo: 25, hi: 75 }, 25, 60, 300)).toEqual({ lo: 10, hi: 75 });
+    expect(followWindow({ lo: 10, hi: 75 }, 10, 60, 300)).toEqual({ lo: 0, hi: 75 });
+  });
+  it("never goes past the source duration and never shrinks", () => {
+    expect(followWindow({ lo: 25, hi: 75 }, 40, 75, 80)).toEqual({ lo: 25, hi: 80 });
+    expect(followWindow({ lo: 0, hi: 80 }, 0, 80, 80)).toEqual({ lo: 0, hi: 80 });
+  });
+  it("handles a handle that jumped outside the window", () => {
+    expect(followWindow({ lo: 25, hi: 75 }, 100, 140, 300)).toEqual({ lo: 25, hi: 155 });
   });
 });

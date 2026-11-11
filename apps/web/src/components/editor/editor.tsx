@@ -1,11 +1,13 @@
 "use client";
 
-import { OUT_FPS, createDefaultEditState, type Clip, type Job, type SourceVideo, type Word } from "@klipz/shared";
+import { OUT_FPS, createDefaultEditState, type Clip, type CropTrack, type Job, type SourceVideo, type Word } from "@klipz/shared";
 import { normalizeEdit } from "@klipz/video";
 import type { PlayerRef } from "@remotion/player";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useJobs } from "@/hooks/use-jobs";
 import { Autosaver } from "@/lib/editor/autosave";
+import { cropTrackFromClipResponse, isFinishedReframeFor } from "@/lib/editor/crop-refresh";
 import { Playhead } from "@/lib/editor/playhead";
 import { createEditorStore } from "@/lib/editor/store";
 import { fileUrl } from "@/lib/utils";
@@ -82,6 +84,25 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // A reframe of this clip finished (e.g. started from the project page): take the new crop track into the
+  // preview without a reload. Only the crop track is read, so unsaved edits are never touched.
+  const [cropTrack, setCropTrack] = useState<CropTrack | null>(clip.crop_track);
+  const refreshCrop = useCallback(() => {
+    fetch(`/api/clips/${clip.id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: unknown) => {
+        const track = cropTrackFromClipResponse(body);
+        if (track !== undefined) setCropTrack(track);
+      })
+      .catch(() => undefined);
+  }, [clip.id]);
+  useJobs(clip.project_id, initialJobs, (job) => {
+    if (isFinishedReframeFor(job, clip.id)) {
+      refreshCrop();
+      setNotice("Reframing finished: the preview now uses the new framing.");
+    }
+  });
+
   // ── autosave wiring ──────────────────────────────────────────────────
   useEffect(() => {
     const a = new Autosaver({
@@ -139,7 +160,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
       save,
       clip: { id: clip.id, projectId: clip.project_id, title: clip.title, startSec: clip.start_sec, endSec: clip.end_sec },
       source: { url: fileUrl(source.storage_key) ?? "", width: source.width ?? 1920, height: source.height ?? 1080, duration: source.duration_sec },
-      cropTrack: clip.crop_track,
+      cropTrack,
       getTime: () => (playerRef.current?.getCurrentFrame() ?? playhead.current) / OUT_FPS,
       seekSec: (t) => seekFrame(Math.round(t * OUT_FPS)),
       seekFrame,
@@ -148,7 +169,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
       openTab: setTab,
       showHelp: () => setHelp(true),
     }),
-    [store, playhead, view, save, clip.id, clip.project_id, clip.title, clip.start_sec, clip.end_sec, clip.crop_track, source.storage_key, source.width, source.height, source.duration_sec, seekFrame],
+    [store, playhead, view, save, clip.id, clip.project_id, clip.title, clip.start_sec, clip.end_sec, cropTrack, source.storage_key, source.width, source.height, source.duration_sec, seekFrame],
   );
 
   useEditorShortcuts(ctx);
