@@ -21,6 +21,7 @@ class Sample:
     faces: list[Face] = field(default_factory=list)
     motion: float = 0.0  # mean abs frame difference vs the previous sample, 0..1
     edge: float = 0.0  # fraction of strong-edge pixels (text/UI-like content), 0..1
+    flat: float = 0.0  # fraction of 8x8 blocks without any texture/noise, 0..1 (slides ~0.7+, camera ~0)
 
 
 @dataclass
@@ -38,8 +39,25 @@ class PlanConfig:
     split_presence: float = 0.6  # both faces visible in at least this fraction of the shot
     split_min_talk: float = 0.8  # both speakers talk at least this long within the shot
     split_min_sep: float = 0.12  # min horizontal separation of the two faces (normalised)
-    screen_motion: float = 0.02  # low motion ...
-    screen_edge: float = 0.06  # ... or lots of text-like edges => screen content
+    # ── "is this faceless landscape shot a slide/screen (letterbox) or camera footage (centre crop)?" ──
+    # Measured per shot as the mean over its samples (the first one straddles the cut and is skipped):
+    #   motion = mean |frame diff| (160 px gray, 0..1)  edge = Canny(100,200) pixel fraction  flat = 8x8 blocks with std < 2
+    # Reference values: static slide  motion 0       edge 0.02-0.10  flat 0.7-0.95
+    #                   code/UI       motion 0-0.02  edge 0.06-0.2   flat 0.3-0.6
+    #                   tripod camera motion 0.006+  (sensor noise)   edge < 0.03   flat < 0.1
+    #                   moving camera motion 0.02+                    edge < 0.05   flat < 0.1
+    # screen content (-> letterbox) iff ANY of
+    #   slide-like : flat >= screen_flat AND edge >= screen_text_edge   (big blank areas with text/graphics)
+    #   frozen     : motion < screen_frozen_motion AND flat >= screen_frozen_flat   (still image / paused screen)
+    #   dense UI   : edge > screen_edge AND flat >= screen_ui_flat
+    # Anything else with no faces (landscape, nature, B-roll, gameplay...) keeps the centre crop. The old rule
+    # "motion < 0.02 OR edge > 0.06" letterboxed every calm or textured real-camera shot.
+    screen_flat: float = 0.5
+    screen_text_edge: float = 0.004
+    screen_frozen_motion: float = 0.003
+    screen_frozen_flat: float = 0.25
+    screen_edge: float = 0.06
+    screen_ui_flat: float = 0.3
     min_source_height: int = 360  # below this a 9:16 crop would be absurdly upscaled
 
 
@@ -337,6 +355,14 @@ def _fill(pos: list[Optional[tuple[float, float]]]) -> list[tuple[float, float]]
     return out
 
 
+def is_screen_content(motion: float, edge: float, flat: float, cfg: PlanConfig) -> bool:
+    """See PlanConfig: slide-like, frozen or dense-UI content (no camera) -> True."""
+    slide = flat >= cfg.screen_flat and edge >= cfg.screen_text_edge
+    frozen = motion < cfg.screen_frozen_motion and flat >= cfg.screen_frozen_flat
+    dense_ui = edge > cfg.screen_edge and flat >= cfg.screen_ui_flat
+    return slide or frozen or dense_ui
+
+
 def plan_shot(
     start: float,
     end: float,
@@ -370,7 +396,8 @@ def plan_shot(
         stat = inside[1:] if len(inside) > 1 else inside  # first sample of a shot straddles the cut
         motion = sum(s.motion for s in stat) / len(stat) if stat else 1.0
         edge = sum(s.edge for s in stat) / len(stat) if stat else 0.0
-        if landscape and (motion < cfg.screen_motion or edge > cfg.screen_edge):
+        flat = sum(s.flat for s in stat) / len(stat) if stat else 0.0
+        if landscape and is_screen_content(motion, edge, flat, cfg):
             seg["layout"] = "letterbox"
             info.layout, info.reason = "letterbox", "screen-content"
         else:

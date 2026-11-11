@@ -33,8 +33,9 @@ def face(cx: float, cy: float = 0.4, w: float = 0.1, mouth: Optional[float] = 0.
     return Face(cx=cx, cy=cy, w=w, h=w * 1.3, mouth=mouth)
 
 
-def samples_from(ts: list[float], fn: Callable[[float], list[Face]], motion: float = 0.2, edge: float = 0.01) -> list[Sample]:
-    return [Sample(t=t, faces=fn(t), motion=motion, edge=edge) for t in ts]
+def samples_from(ts: list[float], fn: Callable[[float], list[Face]], motion: float = 0.2, edge: float = 0.01,
+                 flat: float = 0.0) -> list[Sample]:
+    return [Sample(t=t, faces=fn(t), motion=motion, edge=edge, flat=flat) for t in ts]
 
 
 def words_for(turns: list[tuple[str, float, float]]) -> list[dict[str, Any]]:
@@ -223,9 +224,9 @@ def test_no_faces_centre_crop():
     assert s["layout"] == "crop" and s["keys"] == [{"t": 0, "cx": 0.5, "cy": 0.5}] and infos[0].reason == "no-faces"
 
 
-@pytest.mark.parametrize("motion,edge", [(0.005, 0.01), (0.3, 0.12)])
-def test_screen_content_letterbox(motion, edge):
-    sm = samples_from(times(0, 5), lambda t: [], motion=motion, edge=edge)
+@pytest.mark.parametrize("motion,edge,flat", [(0.0, 0.05, 0.8), (0.005, 0.01, 0.6), (0.0, 0.0, 0.4), (0.3, 0.12, 0.4)])
+def test_screen_content_letterbox(motion, edge, flat):
+    sm = samples_from(times(0, 5), lambda t: [], motion=motion, edge=edge, flat=flat)
     track, infos = plan_track(start=0, end=5, src_w=1920, src_h=1080, samples=sm, cuts=[], words=[])
     assert track["segments"][0]["layout"] == "letterbox" and infos[0].reason == "screen-content"
 
@@ -394,20 +395,174 @@ def test_real_mediapipe_path_on_sample_video_falls_back_without_model(db, settin
     assert track["srcW"] == 1280 and len(track["segments"]) == 2
 
 
-def test_real_mediapipe_detection_on_bundled_face_image():
-    """Real face detection on matplotlib's bundled grace_hopper.jpg; needs the cached model."""
-    import cv2
-    import matplotlib
+# ── letterbox heuristic on synthetic frames (real frame_stats + planner) ───────
+def _frames_to_samples(frames: list[np.ndarray], fps: float = 5.0) -> list[Sample]:
+    prev = None
+    out = []
+    for i, fr in enumerate(frames):
+        prev, motion, edge, flat = rf.frame_stats(prev, fr)
+        out.append(Sample(t=i / fps, faces=[], motion=motion, edge=edge, flat=flat))
+    return out
 
+
+def _slide_frame() -> np.ndarray:
+    f = np.full((360, 640, 3), 250, np.uint8)
+    f[30:60, 40:420] = (20, 20, 20)  # title bar
+    for y in range(110, 330, 28):  # text lines
+        f[y:y + 8, 40:40 + 300 + (y % 5) * 40] = (60, 60, 60)
+    f[100:320, 470:600] = (30, 90, 200)  # picture / chart block
+    return f
+
+
+def _camera_frames(n: int, pan: int, seed: int = 1) -> list[np.ndarray]:
+    """Sky-to-ground gradient with a textured band, sensor noise (sigma 5) and an optional horizontal pan."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:360, 0:640]
+    base = 60 + 140 * (yy / 360.0) + 25 * np.sin(xx / 23.0) * np.sin(yy / 17.0)
+    out = []
+    for i in range(n):
+        shifted = np.roll(base, i * pan, axis=1)
+        g = shifted[..., None] * np.array([1.0, 0.95, 0.85]) + rng.normal(0, 5, (360, 640, 3))
+        out.append(np.clip(g, 0, 255).astype(np.uint8))
+    return out
+
+
+def test_letterbox_heuristic_static_slide_is_letterboxed():
+    sm = _frames_to_samples([_slide_frame()] * 25)
+    st = sm[1:]
+    assert all(s.motion == 0 for s in st) and st[0].flat > 0.5 and st[0].edge > 0.004
+    track, infos = plan_track(start=0, end=5, src_w=1920, src_h=1080, samples=sm, cuts=[], words=[])
+    assert track["segments"][0]["layout"] == "letterbox" and infos[0].reason == "screen-content"
+
+
+@pytest.mark.parametrize("pan", [0, 6])
+def test_letterbox_heuristic_real_camera_shot_without_faces_is_centre_cropped(pan):
+    """No faces, natural gradient + texture + sensor noise, tripod (pan 0) or moving camera: centre crop."""
+    sm = _frames_to_samples(_camera_frames(25, pan))
+    st = sm[1:]
+    assert max(s.flat for s in st) < 0.1 and min(s.motion for s in st) > 0.003, (st[0].flat, st[0].motion)
+    track, infos = plan_track(start=0, end=5, src_w=1920, src_h=1080, samples=sm, cuts=[], words=[])
+    seg = track["segments"][0]
+    assert seg["layout"] == "crop" and seg["keys"] == [{"t": 0, "cx": 0.5, "cy": 0.5}] and infos[0].reason == "no-faces"
+
+
+def test_letterbox_heuristic_flat_helper_and_frozen_photo():
+    assert rf.flat_fraction(np.full((64, 64), 128, np.uint8)) == 1.0
+    noise = np.random.default_rng(0).integers(0, 255, (64, 64)).astype(np.uint8)
+    assert rf.flat_fraction(noise) == 0.0
+    # a frozen frame of a mostly-smooth picture (paused video / still image) is treated as screen content
+    still = np.clip(np.mgrid[0:360, 0:640][0][..., None] * 0.5 + np.zeros((360, 640, 3)), 0, 255).astype(np.uint8)
+    sm = _frames_to_samples([still] * 20)
+    track, _ = plan_track(start=0, end=4, src_w=1920, src_h=1080, samples=sm, cuts=[], words=[])
+    assert track["segments"][0]["layout"] == "letterbox"
+
+
+# ── REAL MediaPipe on a real portrait ─────────────────────────────────────────
+_TWO_FACES = (
+    "[1:v]scale=-2:640,split[a][b];[0:v][a]overlay=x=60:y=40:shortest=1[t];"
+    "[t][b]overlay=x=680:y=40:shortest=1,format=yuv420p[v]"
+)
+_PAN_FACE = "[1:v]scale=-2:640[f];[0:v][f]overlay=x='100+60*t':y=40:shortest=1,format=yuv420p[v]"
+
+
+def _real_model() -> Path:
     from klipz_worker.config import data_dir
 
-    model = det.model_path(data_dir())
-    if not model.exists():
-        pytest.skip("face_landmarker.task not cached (offline / download disabled)")
-    img = cv2.imread(str(Path(matplotlib.get_data_path()) / "sample_data" / "grace_hopper.jpg"))
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    faces = det.MediaPipeDetector(model).detect(rgb)
-    assert len(faces) == 1 and 0.2 < faces[0].cx < 0.8 and faces[0].mouth is not None
+    path = det.ensure_model(data_dir())  # the app's own code path: cached, or downloaded once
+    if path is None or not path.exists():
+        pytest.skip("face_landmarker.task not cached and not downloadable (offline / KLIPZ_MODEL_DOWNLOAD=0)")
+    return path
+
+
+def _portrait_still() -> Path:
+    import matplotlib
+
+    p = Path(matplotlib.get_data_path()) / "sample_data" / "grace_hopper.jpg"  # ships with matplotlib: a real face
+    if not p.exists():
+        pytest.skip("no bundled portrait image available")
+    return p
+
+
+def _face_video(name: str, filter_complex: str) -> Path:
+    """Cached under <models>/test-assets (not in the repo). 1280x720, 8 s, the portrait scaled to 640 px tall."""
+    from klipz_worker import ffmpeg
+
+    out = _real_model().parent / "test-assets" / name
+    if not out.exists():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        part = out.with_suffix(".part.mp4")
+        ffmpeg.run_ffmpeg([
+            "-f", "lavfi", "-i", "color=c=0x35506b:size=1280x720:rate=30:duration=8",
+            "-loop", "1", "-framerate", "30", "-i", str(_portrait_still()),
+            "-filter_complex", filter_complex, "-map", "[v]", "-t", "8",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(part),
+        ])
+        part.replace(out)
+    return out
+
+
+def _interp(keys: list[dict[str, float]], t: float) -> float:
+    if t <= keys[0]["t"]:
+        return keys[0]["cx"]
+    for a, b in zip(keys, keys[1:]):
+        if a["t"] <= t <= b["t"]:
+            return a["cx"] + (b["cx"] - a["cx"]) * (t - a["t"]) / max(1e-9, b["t"] - a["t"])
+    return keys[-1]["cx"]
+
+
+def _real_reframe(db, settings, project, video: Path, words: list[dict[str, Any]], monkeypatch) -> dict[str, Any]:
+    monkeypatch.setenv("KLIPZ_MODEL_DIR", str(_real_model().parent))
+    sid = add_source(db, settings, project, video)
+    db.update("source_videos", sid, {"width": 1280, "height": 720, "duration_sec": 8.0, "scene_cuts": []})
+    db.insert("transcripts", {"source_video_id": sid, "words": words})
+    cid = db.insert("clips", {"project_id": project, "source_video_id": sid, "start_sec": 0.5, "end_sec": 7.5})
+    return rf.reframe(_ctx(db, settings, project), cid)  # default_detector -> real MediaPipe
+
+
+def test_real_mediapipe_detection_on_portrait_still():
+    import cv2
+
+    rgb = cv2.cvtColor(cv2.imread(str(_portrait_still())), cv2.COLOR_BGR2RGB)
+    d = det.MediaPipeDetector(_real_model())
+    faces = d.detect(rgb)
+    d.close()
+    assert len(faces) == 1 and 0.4 < faces[0].cx < 0.6 and 0.3 < faces[0].cy < 0.5 and faces[0].mouth is not None
+
+
+def test_real_reframe_crop_follows_a_moving_face(db, settings, project, monkeypatch):
+    """Face moves right at 60 px/s (face centre x = 0.297 + 0.0469 t of the frame). The planned crop must follow."""
+    video = _face_video("face_pan.mp4", _PAN_FACE)
+    words = [{"w": "hello", "s": 0.6, "e": 7.0, "spk": "S1"}]
+    track = _real_reframe(db, settings, project, video, words, monkeypatch)
+    (seg,) = track["segments"]
+    assert seg["layout"] == "crop" and len(seg["keys"]) >= 2
+    errs = [_interp(seg["keys"], t) - (0.297 + 0.0469 * t) for t in (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)]
+    print("crop cx minus true face cx at t=1..7:", [round(e, 3) for e in errs])
+    assert max(abs(e) for e in errs) < 0.06  # the smoothed follower may lag a little but never loses the face
+    assert _interp(seg["keys"], 7.0) - _interp(seg["keys"], 1.0) > 0.2  # and it really moved with it
+
+
+def test_real_reframe_two_faces_alternating_speakers_splits(db, settings, project, monkeypatch):
+    video = _face_video("face_two.mp4", _TWO_FACES)
+    words = []
+    for i, (spk, s) in enumerate([("S1", 0.6), ("S2", 2.2), ("S1", 3.8), ("S2", 5.4)]):
+        words += [{"w": f"w{i}{j}", "s": round(s + j * 0.35, 3), "e": round(s + j * 0.35 + 0.3, 3), "spk": spk} for j in range(4)]
+    track = _real_reframe(db, settings, project, video, words, monkeypatch)
+    (seg,) = track["segments"]
+    top_cx, bottom_cx = seg["keys"][0]["cx"], seg["keys2"][0]["cx"]
+    print("split layout:", seg["layout"], "top cx", round(top_cx, 3), "bottom cx", round(bottom_cx, 3), "(true 0.265 / 0.750)")
+    assert seg["layout"] == "split"
+    # each half-window is 0.633 of the source wide, so the centres clamp to [0.316, 0.684]; the faces stay inside
+    half = 0.5 * (720 * (1080 / 960) / 1280)
+    assert top_cx == pytest.approx(half, abs=0.01) and bottom_cx == pytest.approx(1 - half, abs=0.01)
+    assert abs(top_cx - 0.265) < half and abs(bottom_cx - 0.75) < half  # left person on top
+
+
+def test_real_reframe_two_faces_one_speaker_is_not_split(db, settings, project, monkeypatch):
+    video = _face_video("face_two.mp4", _TWO_FACES)
+    words = [{"w": f"w{j}", "s": round(0.6 + j * 0.35, 3), "e": round(0.9 + j * 0.35, 3), "spk": "S1"} for j in range(18)]
+    track = _real_reframe(db, settings, project, video, words, monkeypatch)
+    assert track["segments"][0]["layout"] == "crop"
 
 
 def test_speech_turns_merge():

@@ -6,6 +6,8 @@ import { FONT_FILES, createDefaultEditState, type VideoPiece } from "@klipz/shar
 import { entrance, hookEnvelope, transitionStyle } from "./anim";
 import { fitLines, fitScale, measureText } from "./fit";
 import { clipDurationInFrames, normalizeProps, resolveSrc } from "./props";
+import { compositionDefaults, resolveCompositionProps } from "./default-props";
+import type { ClipInputProps } from "./types";
 import { pieceFrames } from "./MainTrack";
 import { displayText, maxCaptionWidth } from "./Captions";
 // @ts-expect-error plain JS module without types
@@ -184,5 +186,52 @@ describe("fonts", () => {
     for (const files of Object.values(FONT_FILES)) {
       for (const f of files) expect(fs.statSync(path.join(dir, f.file)).size).toBeGreaterThan(1000);
     }
+  });
+});
+
+describe("normalizeProps edit/clip precedence", () => {
+  const clip = { start: 12, end: 20, words: [{ w: "Hi", s: 12.5, e: 13 }] };
+  // what calculateMetadata resolves from the CLI input props (the Composition registers no defaultProps)
+  const merged = (input: Record<string, unknown>) => resolveCompositionProps({ ...({} as object), ...input } as unknown as ClipInputProps);
+
+  it("composition defaults carry no edit that could shadow clip", () => {
+    expect((compositionDefaults as Record<string, unknown>).edit).toBeUndefined();
+  });
+  it("clip alone (edit missing) derives the edit even after the defaults merge", () => {
+    const p = normalizeProps(merged({ sourceUrl: "u", clip }));
+    expect(p.edit.video[0]).toMatchObject({ srcStart: 12, srcEnd: 20 });
+  });
+  it("edit null / undefined + clip both derive from clip", () => {
+    for (const edit of [null, undefined]) {
+      const p = normalizeProps(merged({ sourceUrl: "u", clip, edit }));
+      expect(p.edit.video[0]).toMatchObject({ srcStart: 12, srcEnd: 20 });
+      expect(p.edit.captions.words[0]?.w).toBe("Hi");
+    }
+  });
+  it("an explicit edit always wins over clip", () => {
+    const edit = createDefaultEditState({ start: 1, end: 2, words: [] });
+    const p = normalizeProps(merged({ sourceUrl: "u", clip, edit }));
+    expect(p.edit.video[0]).toMatchObject({ srcStart: 1, srcEnd: 2 });
+  });
+  it("empty video array: clear error without clip, clip range with clip", () => {
+    const edit = { ...createDefaultEditState({ start: 1, end: 2, words: [] }), video: [] };
+    expect(() => normalizeProps({ sourceUrl: "u", edit })).toThrow(/video is empty/);
+    const p = normalizeProps({ sourceUrl: "u", edit, clip });
+    expect(p.edit.video[0]).toMatchObject({ srcStart: 12, srcEnd: 20 });
+  });
+});
+
+describe("resolveCompositionProps (studio placeholder vs real renders)", () => {
+  it("only a props object without sourceUrl (studio) gets the placeholder clip", () => {
+    const p = normalizeProps(resolveCompositionProps({} as unknown as ClipInputProps));
+    expect(p.edit.video[0]).toMatchObject({ srcStart: 0, srcEnd: 4.4 });
+  });
+  it("an empty edit.video from the CLI is an error, not the placeholder clip", () => {
+    const edit = { ...createDefaultEditState({ start: 1, end: 2, words: [] }), video: [] };
+    const input = { sourceUrl: "http://x/a.mp4", edit } as unknown as ClipInputProps;
+    expect(() => normalizeProps(resolveCompositionProps(input))).toThrow(/video is empty/);
+  });
+  it("sourceUrl without edit/clip is an error, not the placeholder clip", () => {
+    expect(() => normalizeProps(resolveCompositionProps({ sourceUrl: "http://x/a.mp4" } as unknown as ClipInputProps))).toThrow(/edit.*clip/);
   });
 });

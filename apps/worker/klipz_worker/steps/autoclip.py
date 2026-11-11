@@ -7,6 +7,7 @@ from typing import Any, Optional
 from ..runner import JobContext, PermanentError
 from .analyze import analyze
 from .reframe import reframe
+from .render import render_fingerprint
 
 log = logging.getLogger("klipz.autoclip")
 
@@ -14,16 +15,33 @@ DEFAULT_MAX_CLIPS = 5
 LIVE = ("queued", "rendering", "ready")
 
 
-def _current_render(db: Any, clip: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """A queued/rendering/ready render that covers the clip's current edit_version."""
+def is_render_current(render: dict[str, Any], clip: dict[str, Any], *, style_changed: bool = False) -> bool:
+    """Is this render (still) the right output for the clip's present configuration?
+
+    - queued: not started, it will read the live clip -> current.
+    - rendering / ready with a stored fingerprint (renders.options.fingerprint, written when the render
+      started): current iff it equals the fingerprint of the clip now (style, edit, crop track, options).
+    - legacy rows without a fingerprint: fall back to edit_version, and treat a ready render as stale when
+      this very call changed the caption style (it cannot be proven to match)."""
+    if render["status"] == "queued":
+        return True
+    opts = render.get("options") or {}
+    stored = opts.get("fingerprint") if isinstance(opts, dict) else None
+    if stored:
+        return stored == render_fingerprint(clip, opts)
+    if render["status"] == "ready":
+        return render.get("edit_version") == int(clip.get("edit_version") or 0) and not style_changed
+    return not style_changed  # rendering, started by an older worker: it read the live clip
+
+
+def _current_render(db: Any, clip: dict[str, Any], *, style_changed: bool = False) -> Optional[dict[str, Any]]:
     rows = db.many(
         "renders",
         "select * from renders where clip_id = ? and status in ('queued','rendering','ready') order by created_at desc",
         clip["id"],
     )
-    ver = int(clip.get("edit_version") or 0)
     for r in rows:
-        if r["status"] != "ready" or r.get("edit_version") == ver:  # unfinished renders read the live edit
+        if is_render_current(r, clip, style_changed=style_changed):
             return r
     return None
 
@@ -52,11 +70,14 @@ def autoclip(ctx: JobContext, source_video_id: str, max_clips: int = DEFAULT_MAX
         sub = ctx.sub(0.6 + 0.4 * i / n, 0.6 + 0.4 * (i + 0.9) / n)
         sub.progress(0.0, f"Reframing clip {i + 1}/{n}", force=True)
         reframe(sub, cid)
-        if style_id:
+        before = db.get("clips", cid)
+        style_changed = bool(style_id) and (before or {}).get("caption_style_id") != style_id
+        if style_id and style_changed:
             db.update("clips", cid, {"caption_style_id": style_id})
         clip = db.get("clips", cid)
-        assert clip is not None
-        existing = _current_render(db, clip)
+        if clip is None:
+            continue  # deleted while the job ran
+        existing = _current_render(db, clip, style_changed=style_changed)
         if existing is None:
             rid = db.insert("renders", {"clip_id": cid, "status": "queued", "options": {}})
         else:

@@ -96,6 +96,7 @@ const TextView: React.FC<{ item: TextItem }> = ({ item }) => {
         padding: hasBg ? "12px 24px" : undefined,
         borderRadius: hasBg ? 16 : undefined,
         textAlign: "center",
+        width: "max-content",
         maxWidth: OUT_W - 96,
         whiteSpace: "pre-wrap",
         textShadow: hasBg ? undefined : "0 3px 12px rgba(0,0,0,0.7)",
