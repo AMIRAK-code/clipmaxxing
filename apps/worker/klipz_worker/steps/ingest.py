@@ -3,10 +3,14 @@ the loudness curve. Each part is skipped when its output already exists, so
 re-running after a crash only redoes what is missing."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from .. import ffmpeg
 from ..runner import JobContext, PermanentError
+
+
+log = logging.getLogger("klipz.ingest")
 
 
 def source_file(ctx: JobContext, source: dict) -> Path:
@@ -50,6 +54,17 @@ def ingest(ctx: JobContext, source_video_id: str) -> dict:
         ffmpeg.extract_audio(path, tmp, lambda p: ctx.progress(0.05 + 0.45 * p))
         tmp.replace(audio_path)
     db.update("source_videos", source_video_id, {"audio_key": audio_key})
+
+    thumb_key = f"sources/{source_video_id}/thumb.jpg"
+    thumb_path = ctx.settings.storage_path(thumb_key)
+    if not thumb_path.exists():
+        try:
+            dur = float(db.get("source_videos", source_video_id)["duration_sec"] or 0)  # type: ignore[index]
+            tmp_thumb = thumb_path.with_name("thumb.part.jpg")
+            ffmpeg.extract_frame(path, dur * 0.1, tmp_thumb)
+            tmp_thumb.replace(thumb_path)
+        except Exception as e:  # noqa: BLE001 - a missing thumbnail must not fail ingest
+            log.warning("thumbnail failed: %s", e)
 
     if source.get("scene_cuts") is None:
         ctx.progress(0.5, "Detecting shot changes")

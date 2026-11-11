@@ -58,10 +58,12 @@ export const newId = (): string => randomUUID();
 export const nowIso = (): string => new Date().toISOString();
 
 export function all<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {
-  return db().prepare(sql).all(...params) as T[];
+  // node:sqlite rows have a null prototype, which React Server Components refuse to serialise.
+  return db().prepare(sql).all(...params).map((r) => ({ ...r })) as T[];
 }
 export function get<T = Row>(sql: string, ...params: SQLInputValue[]): T | undefined {
-  return db().prepare(sql).get(...params) as T | undefined;
+  const r = db().prepare(sql).get(...params);
+  return r ? ({ ...r } as T) : undefined;
 }
 export function run(sql: string, ...params: SQLInputValue[]): { changes: number } {
   const r = db().prepare(sql).run(...params);
