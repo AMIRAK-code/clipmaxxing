@@ -47,8 +47,15 @@ export function normalizeEdit(edit: EditState): EditState {
  */
 export function normalizeProps(input: ClipInputProps): ClipProps {
   let edit: EditState;
-  if (input.edit) {
-    edit = normalizeEdit(input.edit);
+  const given = input.edit ?? null;
+  const emptyVideo = !!given && (!Array.isArray(given.video) || given.video.length === 0);
+  if (given && emptyVideo && !input.clip) {
+    // never silently render a placeholder second of the source
+    throw new Error("edit.video is empty: nothing to render (give at least one video piece or a `clip` range)");
+  }
+  if (given && !emptyVideo) {
+    // an explicit edit always wins over `clip`
+    edit = normalizeEdit(given);
   } else if (input.clip) {
     const c = input.clip;
     edit = createDefaultEditState({

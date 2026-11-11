@@ -53,15 +53,30 @@ def iter_frames(path: Any, start: float, end: float, src_w: int, src_h: int, fps
         proc.wait()
 
 
-def frame_stats(prev_gray: Optional[np.ndarray], frame_rgb: np.ndarray) -> tuple[np.ndarray, float, float]:
-    """(gray, motion, edge): mean abs diff vs the previous frame and Canny edge fraction."""
+FLAT_BLOCK = 8
+FLAT_STD = 2.0  # 8x8 block with gray-level std below this counts as flat (no texture, no sensor noise)
+
+
+def flat_fraction(gray: np.ndarray) -> float:
+    """Fraction of 8x8 blocks that are perfectly flat. Slides, documents and UI have large flat areas;
+    camera footage never does (sensor noise + texture + lighting gradients)."""
+    h, w = (gray.shape[0] // FLAT_BLOCK) * FLAT_BLOCK, (gray.shape[1] // FLAT_BLOCK) * FLAT_BLOCK
+    if h == 0 or w == 0:
+        return 0.0
+    blocks = gray[:h, :w].astype(np.float32).reshape(h // FLAT_BLOCK, FLAT_BLOCK, w // FLAT_BLOCK, FLAT_BLOCK)
+    std = blocks.std(axis=(1, 3))
+    return float(np.mean(std < FLAT_STD))
+
+
+def frame_stats(prev_gray: Optional[np.ndarray], frame_rgb: np.ndarray) -> tuple[np.ndarray, float, float, float]:
+    """(gray, motion, edge, flat): mean abs diff vs the previous frame, Canny edge fraction, flat-block fraction."""
     import cv2
 
     gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
     small = cv2.resize(gray, (160, max(2, int(160 * gray.shape[0] / gray.shape[1]))), interpolation=cv2.INTER_AREA)
     motion = 0.0 if prev_gray is None else float(np.mean(np.abs(small.astype(np.int16) - prev_gray.astype(np.int16)))) / 255.0
     edges = cv2.Canny(gray, 100, 200)
-    return small, motion, float(np.count_nonzero(edges)) / edges.size
+    return small, motion, float(np.count_nonzero(edges)) / edges.size, flat_fraction(gray)
 
 
 def collect_samples(path: Any, start: float, end: float, src_w: int, src_h: int, detector: Detector,
@@ -70,13 +85,13 @@ def collect_samples(path: Any, start: float, end: float, src_w: int, src_h: int,
     prev: Optional[np.ndarray] = None
     total = max(1, int((end - start) * SAMPLE_FPS))
     for t, frame in iter_frames(path, start, end, src_w, src_h):
-        prev, motion, edge = frame_stats(prev, frame)
+        prev, motion, edge, flat = frame_stats(prev, frame)
         try:
             faces = detector.detect(frame)
         except Exception as e:  # noqa: BLE001 - one bad frame must not kill the clip
             log.warning("face detection failed at %.2fs: %s", t, e)
             faces = []
-        samples.append(Sample(t=t, faces=faces, motion=motion, edge=edge))
+        samples.append(Sample(t=t, faces=faces, motion=motion, edge=edge, flat=flat))
         if on_progress and len(samples) % 10 == 0:
             on_progress(min(1.0, len(samples) / total))
     return samples
@@ -94,7 +109,7 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
     db = ctx.db
     clip = db.get("clips", clip_id)
     if clip is None:
-        raise PermanentError("clip not found")
+        raise PermanentError(f"clip {clip_id} was deleted; nothing to reframe")
     if clip.get("crop_track") and not force:
         ctx.progress(1.0, "Reframe already done", force=True)
         return clip["crop_track"]
@@ -117,6 +132,8 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
         close = getattr(det, "close", None)
         if detector is None and callable(close):
             close()
+    if db.get("clips", clip_id) is None:  # deleted while frames were being analysed
+        raise PermanentError(f"clip {clip_id} was deleted while reframing")
     transcript = db.one("transcripts", "select * from transcripts where source_video_id = ?", source["id"])
     track, infos = plan_track(
         start=start, end=end, src_w=src_w, src_h=src_h, samples=samples,

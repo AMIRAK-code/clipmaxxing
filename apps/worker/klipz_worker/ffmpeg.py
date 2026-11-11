@@ -2,6 +2,7 @@
 falls back to the bundled static build (downloaded once by static-ffmpeg)."""
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import shutil
@@ -112,21 +113,61 @@ def extract_audio(src: Path, dst_wav: Path, on_progress: Optional[Callable[[floa
     )
 
 
-def scene_cuts(src: Path, threshold: float = 0.32, on_progress: Optional[Callable[[float], None]] = None) -> list[float]:
-    """Timestamps (s) of shot changes via ffmpeg's scene score on a small proxy."""
-    info = probe(src)
-    out = run_ffmpeg(
-        ["-i", str(src), "-an", "-vf", f"fps=10,scale=320:-2,select='gt(scene,{threshold})',showinfo", "-f", "null", "-"],
-        duration=info["duration"],
-        on_progress=on_progress,
-    )
-    cuts = sorted({round(float(m), 3) for m in re.findall(r"pts_time:([0-9.]+)", out)})
-    # collapse cuts closer than 0.5 s (flashes, dissolves)
+# ── shot-cut detection ──────────────────────────────────────────────────────
+# ffmpeg's scene score (0..1) is a luma difference between consecutive frames of a 10 fps / 320 px
+# proxy. Measured on scripts/make-sample.py (5 hard cuts): 0.71, 0.70, 0.62, 0.06 (gradient -> dark
+# solid) and 0.28 (solid -> rgb pattern) while every in-shot frame stays <= 0.005 (0.024 on the very
+# first frame). A fixed 0.32 threshold therefore found only 3 of 5. Rule now:
+#   * score >= SCENE_STRONG (0.32)  -> cut (the classic threshold, unchanged for real footage)
+#   * score >= SCENE_MIN (0.05) AND >= SCENE_SPIKE (6x) the largest score within +-SCENE_NEIGHBOURS s
+#     -> cut: an isolated one-frame jump is a cut, whereas camera motion / dissolves / fades keep the
+#     neighbouring scores high and are not.
+#   * cuts closer than SCENE_MERGE s collapse to the first (flashes), and the first 0.2 s are ignored.
+SCENE_FPS = 10
+SCENE_STRONG = 0.32
+SCENE_MIN = 0.05
+SCENE_SPIKE = 6.0
+SCENE_NEIGHBOURS = 0.5
+SCENE_MERGE = 0.5
+SCENE_FLOOR = 0.002  # noise floor so a perfectly static neighbourhood does not make the ratio infinite
+
+
+def pick_cuts(scores: list[tuple[float, float]], strong: float = SCENE_STRONG) -> list[float]:
+    """Pure: (time, scene score) samples -> shot-cut times. See the rule above."""
+    cuts: list[float] = []
+    scores = sorted(scores)
+    times = [t for t, _ in scores]  # windowed lookup: hours of handheld footage must not be O(n^2)
+    for i, (t, sc) in enumerate(scores):
+        if t < 0.2 or sc < SCENE_MIN:
+            continue
+        if sc < strong:
+            lo, hi = bisect.bisect_left(times, t - SCENE_NEIGHBOURS), bisect.bisect_right(times, t + SCENE_NEIGHBOURS)
+            near = [scores[j][1] for j in range(lo, hi) if j != i]
+            if sc < SCENE_SPIKE * max([SCENE_FLOOR, *near]):
+                continue
+        cuts.append(round(t, 3))
     merged: list[float] = []
-    for c in cuts:
-        if not merged or c - merged[-1] >= 0.5:
+    for c in sorted(set(cuts)):
+        if not merged or c - merged[-1] >= SCENE_MERGE:
             merged.append(c)
     return merged
+
+
+def scene_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None) -> list[tuple[float, float]]:
+    """(time, scene score) for every proxy frame."""
+    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-i", str(src), "-an", "-vf",
+           f"fps={SCENE_FPS},scale=320:-2,select='gte(scene,0)',metadata=print:file=-", "-f", "null", "-"]
+    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    if res.returncode != 0:
+        raise FfmpegError(f"ffmpeg exited {res.returncode}: {res.stderr[-1500:]}")
+    if on_progress:
+        on_progress(1.0)
+    return [(float(t), float(s)) for t, s in re.findall(r"pts_time:([0-9.]+)\s+lavfi\.scene_score=([0-9.]+)", res.stdout)]
+
+
+def scene_cuts(src: Path, threshold: float = SCENE_STRONG, on_progress: Optional[Callable[[float], None]] = None) -> list[float]:
+    """Timestamps (s) of shot changes (see the rule above). `threshold` is the strong-cut level."""
+    return pick_cuts(scene_scores(src, on_progress), threshold)
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, int]:

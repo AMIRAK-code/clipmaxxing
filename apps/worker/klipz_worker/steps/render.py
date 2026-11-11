@@ -5,6 +5,7 @@ handle_render payload: {render_id}. The renders row already exists (status
 Remotion is COPIED by the post-process: only audio is re-encoded."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -31,7 +32,40 @@ RENDER_MJS = REPO_ROOT / "packages" / "video" / "render.mjs"
 TARGET_LUFS, TARGET_TP, TARGET_LRA = -14.0, -1.5, 11.0
 COVER_FRAME = 24
 _TRANSIENT = re.compile(r"No frame found at position|Compositor error", re.I)
-_BAD_INPUT = re.compile(r"props|sourceUrl|usage:|not absolute", re.I)
+# Permanent = render.mjs / the composition rejected what WE sent (retrying the same props cannot help).
+# These are the exact messages it produces for that; everything else (Chrome crashes, compositor errors,
+# out-of-memory, "inputProps" serialisation hiccups, timeouts...) stays retryable.
+_BAD_INPUT = re.compile(
+    r"^\s*(?:Error:\s*)?(?:"
+    r"props\.sourceUrl is required"
+    r"|props need (?:either )?`edit` or `clip`"
+    r"|usage: render\.mjs"
+    r"|sourceUrl is not absolute"
+    r"|edit\.video is empty"
+    r")",
+    re.I,
+)
+
+
+def is_bad_input(message: str) -> bool:
+    return bool(_BAD_INPUT.search(message))
+
+
+def render_fingerprint(clip: dict[str, Any], options: Optional[dict[str, Any]] = None) -> str:
+    """Hash of everything that changes the pixels of a clip's render: caption style, edit (+ version), crop
+    track and the render options that alter the output. Stored in renders.options.fingerprint when a render
+    starts so 'is this render still current for the clip?' is a comparison, not a guess."""
+    opts = options or {}
+    payload = {
+        "style": clip.get("caption_style_id"),
+        "ver": int(clip.get("edit_version") or 0),
+        "edit": clip.get("edit_state"),
+        "crop": clip.get("crop_track"),
+        "range": [clip.get("start_sec"), clip.get("end_sec")],
+        "denoise": bool(opts.get("denoise")),
+        "voiceover": opts.get("voiceover_key") or None,
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
 _STAGES = {"bundling": "Preparing renderer", "rendering": "Rendering video", "encoding": "Encoding"}
@@ -88,8 +122,8 @@ def build_props(ctx: JobContext, clip: dict[str, Any], source: dict[str, Any], o
         if style_id:
             c["styleId"] = style_id
         props["clip"] = c
-        # Explicit null: the composition's defaultProps carry an `edit`, which would otherwise
-        # shadow `clip` in normalizeProps (observed: every clip rendered as the 4.4 s default).
+        # Explicit null is kept although the composition no longer has a default `edit`
+        # (it used to shadow `clip`; harmless belt and braces).
         props["edit"] = None
     return props
 
@@ -189,7 +223,7 @@ def run_remotion(
     finally:
         err_path.unlink(missing_ok=True)
     if error is not None:
-        raise RenderError(error) if not _BAD_INPUT.search(error) else PermanentError(error)
+        raise PermanentError(error) if is_bad_input(error) else RenderError(error)
     if code != 0 or done is None:
         raise RenderError(f"render process exited with code {code}: {tail.strip()[-600:]}")
     return done
@@ -230,7 +264,32 @@ def finalize(src: Path, dst: Path, *, denoise: bool = False) -> Optional[float]:
           f"measured_LRA={m['input_lra']}:measured_TP={m['input_tp']}:measured_thresh={m['input_thresh']}:"
           f"offset={m['target_offset']}:linear=true,aresample=48000")
     ffmpeg.run_ffmpeg([*base, "-map", "0:a:0", "-af", af, *tail])
-    return round(measure_loudness(dst)["input_i"], 2)
+    got = measure_loudness(dst)["input_i"]
+    if abs(got - TARGET_LUFS) > LUFS_TOLERANCE:
+        got = _trim_to_target(dst, got, tail)
+    return round(got, 2)
+
+
+LUFS_TOLERANCE = 0.5
+
+
+def _trim_to_target(dst: Path, measured: float, tail: list[str]) -> float:
+    """loudnorm falls back to its dynamic mode (and lands below target) for peaky, wide-range speech whose
+    linear gain would break the -1.5 dBTP ceiling. One corrective pass: plain gain + a true-peak limiter."""
+    gain = max(-12.0, min(12.0, TARGET_LUFS - measured))
+    fixed = dst.with_name(dst.stem + ".trim.mp4")
+    try:
+        af = f"volume={gain:.2f}dB,alimiter=limit=0.84:attack=5:release=60:level=disabled"
+        ffmpeg.run_ffmpeg(["-i", str(dst), "-map", "0:v:0", "-c:v", "copy", "-map", "0:a:0", "-af", af, *tail[:-1], str(fixed)])
+        after = measure_loudness(fixed)["input_i"]
+        if abs(after - TARGET_LUFS) < abs(measured - TARGET_LUFS):
+            os.replace(fixed, dst)
+            return after
+    except Exception as e:  # noqa: BLE001 - keep the already normalised file
+        log.warning("loudness trim failed: %s", e)
+    finally:
+        fixed.unlink(missing_ok=True)
+    return measured
 
 
 def verify_output(path: Path) -> dict[str, Any]:
@@ -252,7 +311,7 @@ def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
     db = ctx.db
     render = db.get("renders", render_id)
     if render is None:
-        raise PermanentError("render not found")
+        raise PermanentError(f"render {render_id} no longer exists (its clip was deleted); nothing to render")
     if render["status"] == "ready" and render.get("storage_key") and ctx.settings.storage_path(render["storage_key"]).exists():
         ctx.progress(1.0, "Already rendered", force=True)
         return {"render_id": render_id, "storage_key": render["storage_key"], "skipped": True}
@@ -260,7 +319,7 @@ def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
     try:
         clip = db.get("clips", render["clip_id"])
         if clip is None:
-            raise PermanentError("clip not found")
+            raise PermanentError(f"clip {render['clip_id']} was deleted; nothing to render")
         source = db.get("source_videos", clip["source_video_id"])
         if source is None:
             raise PermanentError("source video not found")
@@ -272,8 +331,11 @@ def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
         if not clip.get("crop_track"):
             reframe(ctx.sub(0.0, 0.12), clip["id"])
             clip = db.get("clips", clip["id"])  # type: ignore[assignment]
+            if clip is None:
+                raise PermanentError(f"clip {render['clip_id']} was deleted while preparing; nothing to render")
         # version of the edit the props are built from (not an earlier read: autosave may land meanwhile)
         edit_version = int(clip.get("edit_version") or 0)
+        db.update("renders", render_id, {"options": {**options, "fingerprint": render_fingerprint(clip, options)}})
         props = build_props(ctx, clip, source, options)
 
         shutil.rmtree(work, ignore_errors=True)
@@ -294,6 +356,8 @@ def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
         final = work / "final.mp4"
         lufs = finalize(raw, final, denoise=bool(options.get("denoise")))
         info = verify_output(final)
+        if db.get("renders", render_id) is None:  # deleted (clip removed in the UI) while Remotion was busy
+            raise PermanentError(f"render {render_id} was deleted while rendering; output discarded")
         ctx.progress(0.96, "Saving", force=True)
         key, cover_key = f"renders/{render_id}/clip.mp4", f"renders/{render_id}/cover.jpg"
         dest, dest_cover = ctx.settings.storage_path(key), ctx.settings.storage_path(cover_key)

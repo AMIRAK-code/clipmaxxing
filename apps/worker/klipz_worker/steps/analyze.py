@@ -23,7 +23,10 @@ def analyze(
     max_clips: int = DEFAULT_MAX_CLIPS,
     force: bool = False,
     scorer: Optional[Any] = None,
+    retranscribe: bool = False,
 ) -> dict[str, Any]:
+    """`retranscribe` replaces the stored transcript (e.g. after changing the Whisper model) before scoring;
+    it only applies when the analysis really runs (no existing clips, or `force`)."""
     db = ctx.db
     source = db.get("source_videos", source_video_id)
     if source is None:
@@ -35,7 +38,7 @@ def analyze(
         return {"source_video_id": source_video_id, "clips_created": 0, "clip_ids": [], "skipped": True}
 
     source = ingest(ctx.sub(0.0, 0.15), source_video_id)
-    transcript = transcribe(ctx.sub(0.15, 0.6), source_video_id)
+    transcript = transcribe(ctx.sub(0.15, 0.6), source_video_id, force=retranscribe)
 
     ctx.progress(0.6, "Finding moments", force=True)
     duration = float(source.get("duration_sec") or 0)
@@ -101,4 +104,4 @@ def handle_analyze(ctx: JobContext) -> dict[str, Any]:
     except (TypeError, ValueError):
         raise PermanentError("payload.max_clips must be an integer") from None
     max_clips = max(1, min(50, max_clips))
-    return analyze(ctx, sid, max_clips, bool(ctx.payload.get("force")))
+    return analyze(ctx, sid, max_clips, bool(ctx.payload.get("force")), retranscribe=bool(ctx.payload.get("retranscribe")))
