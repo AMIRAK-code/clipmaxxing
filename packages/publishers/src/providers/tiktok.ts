@@ -192,6 +192,17 @@ function parseCreatorInfo(data: unknown): TikTokCreatorInfo {
   return info;
 }
 
+/**
+ * validate() is pure and has no ctx, so the audit flag travels on the account: pass
+ * `withTikTokAudited(account, ctx.config)` (reads config.extra.tiktokAudited, i.e. env TIKTOK_AUDITED=true)
+ * before calling validate(). Absent / not "true" = unaudited (personal dev app).
+ * Docs checked 2026-11-11: unaudited clients can only post private content
+ * (https://developers.tiktok.com/doc/content-posting-api-get-started).
+ */
+export function withTikTokAudited(account: AccountInfo, config: { extra?: Record<string, string> | undefined }): AccountInfo {
+  return { ...account, meta: { ...account.meta, tiktokAudited: config.extra?.tiktokAudited === 'true' } };
+}
+
 /** Read a TikTokCreatorInfo previously stored on account.meta.creatorInfo (camelCase or raw API shape). */
 function creatorInfoFromAccount(account?: AccountInfo): TikTokCreatorInfo | undefined {
   const raw = account?.meta.creatorInfo;
@@ -361,6 +372,11 @@ export const tiktokPublisher: Publisher = {
       issues.push(issue('options.privacyLevel', 'privacy_required', 'Choose who can view this video. TikTok does not allow a default privacy setting.'));
     } else if (creator && !creator.privacyLevelOptions.includes(o.privacyLevel)) {
       issues.push(issue('options.privacyLevel', 'privacy_not_available', `"${o.privacyLevel}" is not available for this TikTok account right now.`));
+    }
+    if (o.privacyLevel && o.privacyLevel !== 'SELF_ONLY' && account?.meta.tiktokAudited !== true) {
+      issues.push(
+        issue('options.privacyLevel', 'unaudited_app_forced_private', 'This TikTok app is not audited (TIKTOK_AUDITED is not "true"): TikTok will force the post to private (SELF_ONLY) and the TikTok account must itself be private.', 'warning'),
+      );
     }
     if (!o.consentAccepted) {
       issues.push(issue('options.consentAccepted', 'consent_required', `The user must agree before posting: "${getTikTokConsentText(o)}".`));

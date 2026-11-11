@@ -4,7 +4,7 @@ import { bodyBytes, formBody, makeAccount, makeMeta, makeRender, query, scripted
 import { facebookPublisher as fb } from './facebook';
 import { instagramPublisher as ig } from './instagram';
 
-const G = 'https://graph.facebook.com/v23.0';
+const G = 'https://graph.facebook.com/v27.0';
 const pagesResponse = {
   data: [
     {
@@ -56,7 +56,7 @@ describe('instagram', () => {
 
   it('auth url targets the Facebook dialog with publish scopes', () => {
     const url = new URL(ig.getAuthUrl(testCtx(scriptedFetch([]).fetch), { state: 'st' }));
-    expect(url.origin + url.pathname).toBe('https://www.facebook.com/v23.0/dialog/oauth');
+    expect(url.origin + url.pathname).toBe('https://www.facebook.com/v27.0/dialog/oauth');
     expect(url.searchParams.get('scope')).toContain('instagram_content_publish');
     expect(url.searchParams.get('state')).toBe('st');
     const custom = new URL(ig.getAuthUrl(testCtx(scriptedFetch([]).fetch, { graphVersion: 'v27.0', configId: 'cfg1' }), { state: 'st' }));
@@ -86,11 +86,11 @@ describe('instagram', () => {
           expect(c.headers.get('authorization')).toBe('Bearer access-1');
           expect(formBody(c)).toEqual({ media_type: 'REELS', upload_type: 'resumable', caption: 'Hello world\n\n#klipz #clips', share_to_feed: 'true', thumb_offset: '2000' });
         },
-        respond: { json: { id: 'cont1', uri: 'https://rupload.facebook.com/ig-api-upload/v23.0/cont1' } },
+        respond: { json: { id: 'cont1', uri: 'https://rupload.facebook.com/ig-api-upload/v27.0/cont1' } },
       },
       {
         method: 'POST',
-        url: 'https://rupload.facebook.com/ig-api-upload/v23.0/cont1',
+        url: 'https://rupload.facebook.com/ig-api-upload/v27.0/cont1',
         check: (c) => {
           expect(c.headers.get('authorization')).toBe('OAuth access-1');
           expect(c.headers.get('offset')).toBe('0');
@@ -140,7 +140,7 @@ describe('instagram', () => {
     const mock = scriptedFetch([
       quotaStep,
       { method: 'POST', url: `${G}/ig1/media`, respond: { json: { id: 'cont3' } } },
-      { method: 'POST', url: /rupload\.facebook\.com\/ig-api-upload\/v23\.0\/cont3$/, respond: { json: { success: true } } },
+      { method: 'POST', url: /rupload\.facebook\.com\/ig-api-upload\/v27.0\/cont3$/, respond: { json: { success: true } } },
       { method: 'GET', url: `${G}/cont3`, respond: { json: { status_code: 'ERROR', status: 'Error: 2207026 unsupported video format' } } },
       { method: 'GET', url: `${G}/ig1/content_publishing_limit`, respond: { json: { data: [{ quota_usage: 100, config: { quota_total: 100 } }] } } },
     ]);
@@ -241,7 +241,7 @@ describe('facebook', () => {
   const render = makeRender({ filePath: video.filePath });
   const account = makeAccount({ externalAccountId: 'page1', meta: { pageId: 'page1' } });
   const pageTokens = { accessToken: 'page-token-1', scopes: [] };
-  const RUPLOAD = 'https://rupload.facebook.com/video-upload/v23.0/vid1';
+  const RUPLOAD = 'https://rupload.facebook.com/video-upload/v27.0/vid1';
 
   it('connect returns pages with page tokens only in accountTokens', async () => {
     const mock = scriptedFetch(tokenSteps);

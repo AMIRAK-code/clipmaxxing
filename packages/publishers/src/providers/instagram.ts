@@ -78,6 +78,33 @@ async function permalink(ctx: PublisherContext, token: string, mediaId: string):
   return str(asRecord(res.data).permalink);
 }
 
+/**
+ * A container already in status PUBLISHED must never be passed to media_publish again (duplicate post).
+ * The container node does not expose the media id (docs checked 2026-11-11:
+ * https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/content-publishing),
+ * so take the newest media of the account as the best-effort match. Returns undefined when unresolvable.
+ */
+async function resolvePublishedMedia(ctx: PublisherContext, token: string, igId: string): Promise<{ id: string; url?: string } | undefined> {
+  try {
+    const res = await httpRequest(ctx, {
+      url: graphUrl(ctx, `${igId}/media`),
+      query: { fields: 'id,permalink,media_product_type', limit: 1 },
+      bearer: token,
+      mapError: metaError,
+    });
+    const first = asRecord(pick(res.data, 'data', 0));
+    const id = str(first.id);
+    if (!id) return undefined;
+    const kind = str(first.media_product_type);
+    if (kind && kind !== 'REELS') return undefined; // newest media is not a reel: do not guess
+    const url = str(first.permalink);
+    return { id, ...(url ? { url } : {}) };
+  } catch (err) {
+    if (err instanceof PublishError && (err.needsReconnect || err.retryable)) throw err;
+    return undefined;
+  }
+}
+
 async function assertPublishingQuota(ctx: PublisherContext, token: string, igId: string): Promise<void> {
   const res = await httpRequest(ctx, {
     url: graphUrl(ctx, `${igId}/content_publishing_limit`),
@@ -196,6 +223,12 @@ export const instagramPublisher: Publisher = {
     }
     if (!polled.done) return { externalId: `${CONTAINER_PREFIX}${containerId}`, status: 'processing' };
 
+    if (state.code === 'PUBLISHED') {
+      const media = await resolvePublishedMedia(ctx, token, igId);
+      if (media) return { externalId: media.id, status: 'published', ...(media.url ? { url: media.url } : {}) };
+      return { externalId: `${CONTAINER_PREFIX}${containerId}`, status: 'published' };
+    }
+
     const published = await publishContainer(ctx, token, igId, containerId);
     return { externalId: published.id, status: 'published', ...(published.url ? { url: published.url } : {}) };
   },
@@ -209,7 +242,10 @@ export const instagramPublisher: Publisher = {
       if (state.code === 'ERROR' || state.code === 'EXPIRED') {
         return { status: 'failed', error: `Instagram could not process the video (${state.code}): ${state.detail ?? 'no details'}` };
       }
-      if (state.code === 'PUBLISHED') return { status: 'published' };
+      if (state.code === 'PUBLISHED') {
+        const media = await resolvePublishedMedia(ctx, token, igUserId(account));
+        return { status: 'published', ...(media ? { externalId: media.id, ...(media.url ? { url: media.url } : {}) } : {}) };
+      }
       const published = await publishContainer(ctx, token, igUserId(account), containerId);
       return { status: 'published', externalId: published.id, ...(published.url ? { url: published.url } : {}) };
     }

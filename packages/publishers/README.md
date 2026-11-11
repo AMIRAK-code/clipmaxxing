@@ -35,6 +35,8 @@ Platforms that reject `http://localhost` redirects: **TikTok (web Login Kit requ
 | `AGGREGATOR_API_KEY` | aggregator key |
 | `AGGREGATOR_PROVIDERS` | comma list routed via aggregator, e.g. `tiktok,x` |
 | `APP_URL` | public base URL (default `http://localhost:3000`) |
+| `TIKTOK_AUDITED` | `true` once the TikTok app passed audit. Surfaced as `config.extra.tiktokAudited`; use `withTikTokAudited(account, ctx.config)` before `validate()`. When not `true` and privacy is not `SELF_ONLY`, validate() adds the warning `unaudited_app_forced_private` (non-blocking). |
+| `KLIPZ_UPLOAD_MODE` | `buffer` sets `config.extra.uploadMode` (the KLIPZ web app maps it for Instagram, Facebook and aggregator-routed providers); restores whole-file in-memory uploads (Instagram/Facebook rupload, Upload-Post). |
 
 `aggregatorConfigFromEnv(env)` builds an `AggregatorConfig` from these (plus optional `AGGREGATOR_PROFILE_KEY`, `AGGREGATOR_BASE_URL`).
 
@@ -46,7 +48,7 @@ Platforms that reject `http://localhost` redirects: **TikTok (web Login Kit requ
 3. Credentials: OAuth client "Web application", redirect URI above.
 - Scopes: `youtube.upload`, `youtube.readonly`, `yt-analytics.readonly`. Offline access is requested (`access_type=offline`, `prompt=consent`).
 - Before audit: videos uploaded by an unverified API project are **forced private** (locked) until the project passes the API compliance audit.
-- Quota: default 10,000 units/day; `videos.insert` costs about 1,600 units (roughly 6 uploads/day). Quota errors map to `quota_exceeded`, retryable, retry after midnight Pacific.
+- Quota (docs checked 2026-11-11, https://developers.google.com/youtube/v3/determine_quota_cost): `videos.insert` now has its own bucket: each call costs 1 and the default is 100 inserts/day, separate from the 10,000 units/day for other endpoints (older material says 1,600 units per upload). Quota errors map to `quota_exceeded`, retryable, retry after midnight Pacific.
 
 ### TikTok
 1. developers.tiktok.com: create app, add products "Login Kit" and "Content Posting API" (enable Direct Post). Add yourself as a Target User in Sandbox.
@@ -82,6 +84,12 @@ Same Meta app. Scopes: `pages_show_list`, `pages_read_engagement`, `pages_manage
 - [ ] **YouTube**: OAuth app verification (sensitive scopes) plus YouTube API Services compliance audit to lift the forced-private restriction; request quota extension above 10k units/day if needed.
 - [ ] **X**: subscribe to a paid tier or enable pay-per-use credits to post media.
 - [ ] **LinkedIn**: "Share on LinkedIn" self-serve; Community Management API review for company pages.
+
+## Streaming uploads
+Instagram and Facebook rupload and the Upload-Post multipart upload stream local files larger than 8 MiB (`ReadableStream` body, `duplex: "half"`, `Content-Length`/`file_size` from the file size, 1 MiB chunks), so memory stays flat for multi-hundred-MB renders (tested with a 300 MB sparse file). Smaller files go as one buffer. **Streaming request bodies were not verified against the live Meta or Upload-Post endpoints** (only against Node fetch on loopback and mock fetch); set `config.extra.uploadMode = "buffer"` (env `KLIPZ_UPLOAD_MODE=buffer` in the KLIPZ app) to restore the old read-into-memory behaviour.
+
+## Doc re-verification (2026-11-11)
+See code comments for URLs. Corrected: Graph default v27.0 (docs examples), YouTube videos.insert quota. Confirmed: TikTok endpoints (creator_info/query, video/init, status/fetch; unaudited = private only, no numeric limits published), Instagram Reels 3 s-15 min / 300 MB / rupload.facebook.com/ig-api-upload/{ver}/{container}, Facebook Reels video_reels start/finish + rupload video-upload (3-90 s, 540x960, 24-60 fps, 30 posts/24 h), X v2 media upload initialize/append/finalize/status, LinkedIn Videos API + `Linkedin-Version: YYYYMM` (202511 sunsets 2026-11-16; default here 202610), Ayrshare POST /api/post. Not verifiable from official docs: YouTube Shorts max 3 min (secondary sources only), X paid-tier requirement for media (docs silent; secondary sources say free tier ended Feb 2026 for pay-per-use), Upload-Post form field names and status path, Ayrshare analytics path.
 
 ## Verification notes
 Endpoint paths follow the official docs as of writing (YouTube resumable upload, TikTok Content Posting API v2, Meta Reels rupload hosts, X v2 media upload, LinkedIn Videos API). Doc URLs are in code comments. Not verified live: no real credentials were used; all behaviour is tested against scripted mock fetch. Graph API version defaults to `DEFAULT_GRAPH_VERSION`; LinkedIn version header to `DEFAULT_LINKEDIN_VERSION`. Both may need bumping as platforms sunset versions.

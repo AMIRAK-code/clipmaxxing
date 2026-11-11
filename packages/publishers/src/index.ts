@@ -46,6 +46,7 @@ export {
   getTikTokConsentText,
   getTikTokDisclosureLabel,
   planTikTokChunks,
+  withTikTokAudited,
   TIKTOK_SCOPES,
   TIKTOK_PRIVACY_LEVELS,
   TIKTOK_CONSENT_TEXT,

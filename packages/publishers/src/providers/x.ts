@@ -57,12 +57,16 @@ const xError: ErrorMapper = (info) => {
     if (/duplicate/i.test(detail)) return new PublishError(`X rejected duplicate content: ${detail}`, { ...base, code: 'duplicate_content' });
     if (/video longer than/i.test(detail)) return new PublishError(`X: ${detail}`, { ...base, code: 'duration_too_long' });
     if (/suspended|locked/i.test(detail)) return new PublishError(`X account restricted: ${detail}`, { ...base, code: 'account_restricted', needsReconnect: true });
-    // Free / unenrolled apps get 403 (client-forbidden, client-not-enrolled, unsupported-authentication) on posting and media upload.
-    const tierHint = /client-forbidden|client-not-enrolled|not-enrolled|usage-capped|unsupported-authentication|forbidden/.test(type) || /access level|enrolled|subscription|tier|not permitted|not allowed to use/i.test(detail);
-    return new PublishError(`X refused the request${tierHint ? ' (the app\'s API tier does not allow posting/media upload)' : ''}: ${detail}`, {
-      ...base,
-      code: 'tier_required',
-    });
+    // Only access-level / tier / product restrictions are "tier_required" (client-not-enrolled, usage cap for the tier, ...).
+    // X error docs checked 2026-11-11: https://docs.x.com/x-api/fundamentals/response-codes-and-errors
+    const typeText = `${type} ${str(body.type) ?? ''}`;
+    const tierRestricted =
+      /client-not-enrolled|not-enrolled|client-forbidden|usage-capped|unsupported-authentication/.test(typeText) ||
+      /access level|not enrolled|enrolled in|usage cap|cap exceeded|api product|your tier|upgrade|subscription|credits/i.test(detail);
+    if (tierRestricted) {
+      return new PublishError(`X API tier/access level does not allow this request: ${detail}`, { ...base, code: 'tier_required' });
+    }
+    return new PublishError(`X refused the request: ${detail}`, { ...base, code: 'forbidden' });
   }
   return undefined;
 };

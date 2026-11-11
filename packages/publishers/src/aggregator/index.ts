@@ -19,7 +19,7 @@
  */
 import { composeCaption, composeTitle } from '../caption';
 import { PublishError } from '../errors';
-import { httpRequest, withAssetSource, type ErrorMapper } from '../http';
+import { httpRequest, shouldStream, streamingMultipart, withAssetSource, type ErrorMapper } from '../http';
 import type { AccountInfo, AggregatorConfig, PostMetrics, PostStatus, Provider, Publisher, PublisherContext, PublishArgs, PublishResult } from '../types';
 import { asArray, asRecord, bool, compact, metricsOf, num, pick, str, toArrayBuffer } from '../util';
 import { validateCommon } from '../validate';
@@ -106,23 +106,37 @@ async function uploadPostPublish(ctx: PublisherContext, config: AggregatorConfig
       setIf('reply_settings', opt(meta, 'replySettings'));
       break;
   }
+  const url = `${baseUrl(config)}/api/upload`;
+  const auth = { Authorization: `Apikey ${config.apiKey}` };
+  let res;
   if (render.filePath) {
-    // Upload-Post takes the file itself; it is read into memory once for the multipart body.
-    const bytes = await withAssetSource(render, ctx, (source) => source.readChunk(0, source.size));
-    form.set('video', new Blob([toArrayBuffer(bytes)], { type: 'video/mp4' }), 'video.mp4');
+    // Small files: one in-memory multipart. Large files: streamed multipart with a computed
+    // Content-Length (bounded memory). config.extra.uploadMode = "buffer" forces the old path.
+    // Streaming not verified against the live service.
+    res = await withAssetSource(render, ctx, async (source) => {
+      if (!shouldStream(ctx, source.size)) {
+        const bytes = await source.readChunk(0, source.size);
+        form.set('video', new Blob([toArrayBuffer(bytes)], { type: 'video/mp4' }), 'video.mp4');
+        return httpRequest(ctx, { method: 'POST', url, headers: auth, body: form, mapError: aggregatorError });
+      }
+      const fields: Array<[string, string]> = [];
+      for (const [k, v] of form.entries()) if (typeof v === 'string') fields.push([k, v]);
+      const mp = streamingMultipart(ctx, fields, { field: 'video', filename: 'video.mp4', contentType: 'video/mp4', source });
+      return httpRequest(ctx, {
+        method: 'POST',
+        url,
+        headers: { ...auth, 'Content-Type': mp.contentType, 'Content-Length': String(mp.contentLength) },
+        body: mp.body,
+        duplex: 'half',
+        mapError: aggregatorError,
+      });
+    });
   } else if (render.url) {
     form.set('video', render.url);
+    res = await httpRequest(ctx, { method: 'POST', url, headers: auth, body: form, mapError: aggregatorError });
   } else {
     throw new PublishError('Render has neither filePath nor url', { code: 'asset_missing' });
   }
-
-  const res = await httpRequest(ctx, {
-    method: 'POST',
-    url: `${baseUrl(config)}/api/upload`,
-    headers: { Authorization: `Apikey ${config.apiKey}` },
-    body: form,
-    mapError: aggregatorError,
-  });
   const body = asRecord(res.data);
   if (bool(body.success) === false) {
     throw new PublishError(`Upload-Post rejected the upload: ${str(body.message) ?? str(body.error) ?? 'unknown error'}`, { code: 'provider_error', providerPayload: body });
