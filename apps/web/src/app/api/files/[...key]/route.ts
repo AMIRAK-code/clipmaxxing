@@ -15,10 +15,13 @@ const TYPES: Record<string, string> = {
   ".wav": "audio/wav",
   ".mp3": "audio/mpeg",
   ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
   ".webp": "image/webp",
+  ".gif": "image/gif",
 };
 
 /** Serve a stored media file with HTTP Range support so <video> can seek. */

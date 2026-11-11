@@ -1,6 +1,6 @@
 "use client";
 
-import type { Clip, Job, Project, SourceVideo, Word } from "@klipz/shared";
+import type { Clip, Job, Project, Render, SourceVideo, Word } from "@klipz/shared";
 import { AlertTriangle, Scissors, Sparkles, WifiOff } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { JobList } from "@/components/job-list";
@@ -20,6 +20,8 @@ interface ProjectData {
   source: SourceVideo | null;
   clips: Clip[];
   jobs: Job[];
+  /** newest render per clip id */
+  renders?: Record<string, Render>;
 }
 
 const FILTERS: { id: ClipFilter; label: string }[] = [
@@ -33,6 +35,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
   const [title, setTitle] = useState(initial.project.title);
   const [source, setSource] = useState(initial.source);
   const [clips, setClips] = useState(initial.clips);
+  const [renders, setRenders] = useState<Record<string, Render>>(initial.renders ?? {});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<ClipFilter>("all");
   const [showDiscarded, setShowDiscarded] = useState(false);
@@ -45,6 +48,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
       const d = await api<ProjectData>(`/api/projects/${projectId}`);
       setSource(d.source);
       setClips(d.clips);
+      if (d.renders) setRenders(d.renders);
     } catch {
       /* the next job event retries */
     }
@@ -219,7 +223,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
             <>
               {visible.length === 0 ? <p className="rounded-lg border border-dashed border-line p-4 text-center text-sm text-muted">No clips match this filter.</p> : null}
               {visible.map((c) => (
-                <ClipCard key={c.id} clip={c} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} />
+                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} />
               ))}
               {discarded.length > 0 ? (
                 <div className="mt-2">
@@ -234,7 +238,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
                   {showDiscarded ? (
                     <div className="mt-2 flex flex-col gap-3">
                       {discarded.map((c) => (
-                        <ClipCard key={c.id} clip={c} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} />
+                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} />
                       ))}
                     </div>
                   ) : null}

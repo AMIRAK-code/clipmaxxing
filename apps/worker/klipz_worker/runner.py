@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 import traceback
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -93,11 +94,25 @@ class Runner:
             self.current_job = None
         return True
 
+    def maybe_enqueue_cleanup(self) -> bool:
+        """At most one cleanup job per UTC day (dedupe key cleanup:<YYYY-MM-DD>), even after it finished."""
+        if "cleanup" not in self.handlers:
+            return False
+        key = f"cleanup:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        if self.db.one("jobs", "select id from jobs where dedupe_key = ? limit 1", key):
+            return False
+        self.db.enqueue("cleanup", {}, dedupe_key=key, max_attempts=2)
+        return True
+
     def run_forever(self) -> None:
         log.info("worker %s polling %s", self.settings.worker_id, self.settings.db_path)
+        next_cleanup_check = 0.0  # check at start, then hourly
         while not self._stop.is_set():
             try:
                 self.db.set_setting("worker_heartbeat", now_iso())
+                if time.monotonic() >= next_cleanup_check:
+                    next_cleanup_check = time.monotonic() + 3600
+                    self.maybe_enqueue_cleanup()
                 if not self.run_once():
                     self._stop.wait(self.settings.poll_interval)
             except Exception:  # noqa: BLE001 - keep the loop alive

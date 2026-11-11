@@ -1,12 +1,12 @@
 "use client";
 
-import type { Clip } from "@klipz/shared";
-import { Check, Pencil, RotateCcw, X } from "lucide-react";
+import type { Clip, Render } from "@klipz/shared";
+import { Check, Download, Pencil, RotateCcw, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/primitives";
 import { BREAKDOWN_KEYS, clampScore, scoreTone, scorerLabel } from "@/lib/clip-ui";
-import { cn, formatDuration } from "@/lib/utils";
+import { cn, fileUrl, formatDuration } from "@/lib/utils";
 
 const TONE_TEXT = { good: "text-good", warn: "text-warn", bad: "text-bad" } as const;
 const TONE_BAR = { good: "bg-good", warn: "bg-warn", bad: "bg-bad" } as const;
@@ -36,12 +36,15 @@ function Breakdown({ clip }: { clip: Clip }) {
 
 export function ClipCard({
   clip,
+  render,
   rank,
   selected,
   onSelect,
   onStatus,
 }: {
   clip: Clip;
+  /** newest render of this clip, if any */
+  render?: Render;
   rank: number;
   selected: boolean;
   onSelect: () => void;
@@ -105,14 +108,37 @@ export function ClipCard({
               </Button>
             </>
           )}
+          {render ? <RenderBadge render={render} clip={clip} /> : null}
           <Link
             href={`/clips/${clip.id}`}
-            className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-semibold hover:bg-panel-2"
+            className={cn("inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-semibold hover:bg-panel-2", !render && "ml-auto")}
           >
             <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit
           </Link>
         </div>
       </div>
     </article>
+  );
+}
+
+function RenderBadge({ render, clip }: { render: Render; clip: Clip }) {
+  const url = fileUrl(render.storage_key);
+  const outdated = render.status === "ready" && render.edit_version != null && render.edit_version !== clip.edit_version;
+  return (
+    <span className="ml-auto flex items-center gap-2" data-testid="clip-render">
+      <Badge tone={render.status === "ready" ? "good" : render.status === "failed" ? "bad" : "accent"}>
+        {render.status === "ready" ? "Rendered" : render.status === "failed" ? "Render failed" : render.status === "rendering" ? "Rendering…" : "Render queued"}
+      </Badge>
+      {outdated ? <Badge tone="warn">Outdated</Badge> : null}
+      {render.status === "ready" && url ? (
+        <a
+          href={`${url}?download`}
+          aria-label="Download rendered clip"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-semibold hover:bg-panel-2"
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden /> Download
+        </a>
+      ) : null}
+    </span>
   );
 }
