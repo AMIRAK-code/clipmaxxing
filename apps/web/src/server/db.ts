@@ -72,6 +72,8 @@ export function run(sql: string, ...params: SQLInputValue[]): { changes: number 
 
 export function tx<T>(fn: () => T): T {
   const d = db();
+  // Nested call: join the outer transaction (its COMMIT/ROLLBACK decides everything).
+  if (d.isTransaction) return fn();
   d.exec("BEGIN IMMEDIATE");
   try {
     const out = fn();

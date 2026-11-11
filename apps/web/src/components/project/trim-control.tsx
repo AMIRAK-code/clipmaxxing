@@ -3,7 +3,7 @@
 import type { Word } from "@klipz/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtSec } from "@/lib/clip-ui";
-import { moveEdge, nudgeStep, snapToBoundary, wordBoundaries } from "@/lib/trim";
+import { followWindow, initialWindow, moveEdge, nudgeStep, snapToBoundary, wordBoundaries } from "@/lib/trim";
 
 const PAD = 15;
 const COMMIT_DELAY_MS = 600;
@@ -28,7 +28,7 @@ export function TrimControl({
   words: Word[];
   onCommit: (start: number, end: number) => void;
 }) {
-  const [win] = useState(() => ({ lo: Math.max(0, start - PAD), hi: duration ? Math.min(duration, end + PAD) : end + PAD }));
+  const [win, setWin] = useState(() => initialWindow(start, end, duration, PAD));
   const [draft, setDraft] = useState<[number, number]>([start, end]);
   const draftRef = useRef(draft);
   const dragging = useRef<Edge | null>(null);
@@ -48,7 +48,11 @@ export function TrimControl({
     if (dragging.current || timer.current) return;
     draftRef.current = [start, end];
     setDraft([start, end]);
-  }, [start, end]);
+    setWin((w) => followWindow(w, start, end, duration, PAD));
+  }, [start, end, duration]);
+
+  // The window follows the handles once a drag / nudge ends (not mid-drag, so the track never rescales under the pointer).
+  const follow = () => setWin((w) => followWindow(w, draftRef.current[0], draftRef.current[1], duration, PAD));
 
   useEffect(
     () => () => {
@@ -63,6 +67,7 @@ export function TrimControl({
     draftRef.current = [s, e];
     setDraft([s, e]);
     if (timer.current) clearTimeout(timer.current);
+    if (!dragging.current) follow();
     timer.current = setTimeout(() => {
       timer.current = null;
       const [cs, ce] = draftRef.current;
@@ -99,9 +104,11 @@ export function TrimControl({
         }}
         onPointerUp={() => {
           dragging.current = null;
+          follow();
         }}
         onPointerCancel={() => {
           dragging.current = null;
+          follow();
         }}
         onKeyDown={(e) => {
           const dir = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;

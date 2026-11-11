@@ -127,6 +127,23 @@ describe("oauth callback", () => {
   });
 });
 
+describe("sandbox connect is POST-only", () => {
+  it("beginOAuth without allowCreate (what a GET does) creates nothing in sandbox mode", async () => {
+    process.env.KLIPZ_PUBLISH_MOCK = "1";
+    try {
+      const r = await beginOAuth("tiktok");
+      expect(r.redirectTo).toBe("/accounts?connect=tiktok");
+      expect(r.cookieValue).toBeUndefined();
+      expect(listAccounts()).toHaveLength(0);
+      const created = await beginOAuth("tiktok", { allowCreate: true });
+      expect(created.redirectTo).toContain("connected=tiktok");
+      expect(listAccounts()).toHaveLength(1);
+    } finally {
+      delete process.env.KLIPZ_PUBLISH_MOCK;
+    }
+  });
+});
+
 describe("accounts", () => {
   it("disconnect deletes the account and posts keep history", () => {
     process.env.KLIPZ_PUBLISH_MOCK = "1";

@@ -119,11 +119,18 @@ export class Autosaver {
     return !this.needsSave();
   }
 
-  /** Page is going away: fire the save with keepalive so the browser finishes it. */
+  /**
+   * Page is going away: fire the save with keepalive so the browser finishes it.
+   * When a save is already in flight the version we hold is about to be stale (that save bumps it),
+   * so the latest edit is sent without expected_version: it is the newest state, and the in-flight
+   * request (sent earlier) lands first. Never skipped, so an edit made during a save is not lost.
+   */
   flushOnHide(): void {
-    if (this.disposed || !this.needsSave() || this.inflight) return;
+    if (this.disposed || !this.needsSave()) return;
     const edit = this.latest!;
-    const body = JSON.stringify({ edit_state: edit, expected_version: this.version });
+    const payload: { edit_state: EditState; expected_version?: number } = { edit_state: edit };
+    if (!this.inflight) payload.expected_version = this.version;
+    const body = JSON.stringify(payload);
     this.clearTimer();
     void this.fetchImpl(`/api/clips/${this.clipId}`, {
       method: "PATCH",

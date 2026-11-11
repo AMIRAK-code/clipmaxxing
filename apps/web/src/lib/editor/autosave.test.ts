@@ -165,6 +165,23 @@ describe("Autosaver", () => {
     expect(calls).toHaveLength(1); // debounce timer was cleared
   });
 
+  it("flushOnHide still sends the latest edit when a save is in flight (not lost on tab close)", async () => {
+    let release: (r: FetchResponse) => void = () => undefined;
+    const { a, calls } = setup((call, n) => (n === 1 ? new Promise<FetchResponse>((r) => (release = r)) : Promise.resolve(res(200, { clip: { edit_version: 5 } }))));
+    a.change({ ...sampleEdit(), look: "warm" });
+    await vi.advanceTimersByTimeAsync(800); // first save now in flight
+    expect(calls).toHaveLength(1);
+    expect(a.currentStatus).toBe("saving");
+    const newest = { ...sampleEdit(), look: "cool" as const };
+    a.change(newest); // edit made while the save is in flight
+    a.flushOnHide(); // tab closes right now
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ method: "PATCH", keepalive: true });
+    expect((calls[1]!.body.edit_state as { look: string }).look).toBe("cool");
+    expect(calls[1]!.body.expected_version).toBeUndefined(); // the held version is about to be stale
+    release(res(200, { clip: { edit_version: 4 } }));
+  });
+
   it("returning to the persisted edit cancels the pending save", async () => {
     const base = sampleEdit();
     const { a, calls } = setup(async () => res(200, { clip: { edit_version: 4 } }), { saved: base });

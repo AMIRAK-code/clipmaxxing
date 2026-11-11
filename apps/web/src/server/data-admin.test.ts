@@ -89,11 +89,9 @@ describe("status helpers", () => {
     expect(dirSize(d)).toEqual({ bytes: 8, files: 2 });
     fs.rmSync(d, { recursive: true, force: true });
   });
-  it("keysPresent reports presence from env and files, never values", () => {
-    const f = path.join(tmp, "x.env");
-    fs.writeFileSync(f, "# c\nELEVENLABS_API_KEY=abc\nANTHROPIC_API_KEY=\nexport OLLAMA_MODEL='llama'\n");
-    const k = keysPresent(["ELEVENLABS_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_MODEL", "AGGREGATOR_API_KEY"], { AGGREGATOR_API_KEY: "s" }, [f]);
-    expect(k).toEqual({ ELEVENLABS_API_KEY: true, ANTHROPIC_API_KEY: false, OLLAMA_MODEL: true, AGGREGATOR_API_KEY: true });
+  it("keysPresent reports what the process environment holds, never values", () => {
+    const k = keysPresent(["ELEVENLABS_API_KEY", "ANTHROPIC_API_KEY", "AGGREGATOR_API_KEY"], { ELEVENLABS_API_KEY: "abc", ANTHROPIC_API_KEY: "  ", AGGREGATOR_API_KEY: "s" });
+    expect(k).toEqual({ ELEVENLABS_API_KEY: true, ANTHROPIC_API_KEY: false, AGGREGATOR_API_KEY: true });
   });
   it("scorer label follows the worker's rules", () => {
     expect(llmScorerLabel({ ANTHROPIC_API_KEY: true }, {})).toBe("Claude (Anthropic API)");

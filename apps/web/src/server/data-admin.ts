@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { all, db, get, run } from "./db";
-import { dataDir, dbPath, repoRoot, storageDir } from "./paths";
+import { dataDir, dbPath, storageDir } from "./paths";
 
 // ── delete everything ───────────────────────────────────────────────────
 
@@ -100,29 +100,12 @@ export function dirSize(dir: string, limit = 200_000): { bytes: number; files: n
   return { bytes, files };
 }
 
-/** Names (never values) of keys that are non-empty in the environment or the repo-root / web .env.local files. */
-export function keysPresent(names: string[], env: Record<string, string | undefined> = process.env, files: string[] = envFiles()): Record<string, boolean> {
-  const fromFiles = new Set<string>();
-  for (const f of files) {
-    try {
-      for (const line of fs.readFileSync(f, "utf8").split(/\r?\n/)) {
-        const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-        if (m && m[2] && !/^(['"])\1$/.test(m[2])) fromFiles.add(m[1]!);
-      }
-    } catch {
-      /* file absent */
-    }
-  }
-  return Object.fromEntries(names.map((n) => [n, Boolean(env[n]?.trim()) || fromFiles.has(n)]));
-}
-
-function envFiles(): string[] {
-  try {
-    const root = repoRoot();
-    return [path.join(root, ".env.local"), path.join(root, ".env"), path.join(root, "apps", "web", ".env.local")];
-  } catch {
-    return [];
-  }
+/**
+ * Which keys the web process actually sees (names only, never values). The repo-root .env.local / .env are
+ * merged into process.env by next.config.ts, so the environment is the single source of truth.
+ */
+export function keysPresent(names: string[], env: Record<string, string | undefined> = process.env): Record<string, boolean> {
+  return Object.fromEntries(names.map((n) => [n, Boolean(env[n]?.trim())]));
 }
 
 let ffmpegCache: { at: number; value: ToolInfo } | undefined;
@@ -205,8 +188,9 @@ export function llmScorerLabel(keys: Record<string, boolean>, env: Record<string
 
 export async function systemStatus(fetchImpl: typeof fetch = fetch): Promise<SystemStatus> {
   const worker: SystemStatus["worker"] = { online: false, handlers: [], currentJob: null, heartbeatAgeSec: null };
+  const workerPort = Number(process.env.KLIPZ_WORKER_PORT) || 8787;
   try {
-    const res = await fetchImpl("http://127.0.0.1:8787/health", { signal: AbortSignal.timeout(1500), cache: "no-store" });
+    const res = await fetchImpl(`http://127.0.0.1:${workerPort}/health`, { signal: AbortSignal.timeout(1500), cache: "no-store" });
     if (res.ok) {
       const j = (await res.json()) as { ok?: boolean; handlers?: string[]; current_job?: { id: string; type: string } | null };
       worker.online = j.ok !== false;
@@ -214,7 +198,7 @@ export async function systemStatus(fetchImpl: typeof fetch = fetch): Promise<Sys
       worker.currentJob = j.current_job ? { id: j.current_job.id, type: j.current_job.type } : null;
     } else worker.error = `Health check returned HTTP ${res.status}`;
   } catch (e) {
-    worker.error = e instanceof Error && e.name !== "TimeoutError" ? e.message : "No answer on 127.0.0.1:8787";
+    worker.error = e instanceof Error && e.name !== "TimeoutError" ? e.message : `No answer on 127.0.0.1:${workerPort}`;
   }
   const hb = get<{ value: string }>("select value from settings where key = 'worker_heartbeat'");
   if (hb) worker.heartbeatAgeSec = Math.max(0, Math.round((Date.now() - Date.parse(hb.value)) / 1000));

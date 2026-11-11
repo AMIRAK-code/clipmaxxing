@@ -34,13 +34,19 @@ export function createRender(clipId: string, opts: RenderOptions = {}): CreateRe
         r.edit_version === clip.edit_version &&
         Boolean((r as Render & { options?: RenderOptions }).options?.denoise) === options.denoise,
     );
-    if (live) return { render: live, projectId: clip.project_id, reused: true };
+    if (live) return { render: live, projectId: clip.project_id, reused: true, job: null as Job | null };
     const id = newId();
     run("insert into renders (id, clip_id, status, edit_version, options) values (?, ?, 'queued', ?, ?)", id, clipId, clip.edit_version, JSON.stringify(options));
-    return { render: getRender(id)!, projectId: clip.project_id, reused: false };
+    // Same transaction as the insert: there is never a queued render without its job (or the reverse).
+    const job = enqueueJob("render", { render_id: id }, { projectId: clip.project_id, dedupeKey: `render:${id}` });
+    return { render: getRender(id)!, projectId: clip.project_id, reused: false, job };
   });
-  const job = enqueueJob("render", { render_id: created.render.id }, { projectId: created.projectId, dedupeKey: `render:${created.render.id}` });
-  return { render: created.render, job, reused: created.reused };
+  if (created.reused) {
+    // Return the live job of the in-flight render too (idempotent; dedupe key returns the existing one).
+    const job = enqueueJob("render", { render_id: created.render.id }, { projectId: created.projectId, dedupeKey: `render:${created.render.id}` });
+    return { render: created.render, job, reused: true };
+  }
+  return { render: created.render, job: created.job, reused: false };
 }
 
 export interface PlatformCheck {

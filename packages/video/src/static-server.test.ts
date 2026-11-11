@@ -7,10 +7,11 @@ import { assetBaseToServer, keyToUrl, parseRange, resolveSafe, startStaticServer
 let root: string;
 let outside: string;
 let server: Awaited<ReturnType<typeof startStaticServer>>;
+let base: string;
 const body = Buffer.from("0123456789abcdefghij"); // 20 bytes
 
 beforeAll(async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "klipz-static-"));
+  base = fs.mkdtempSync(path.join(os.tmpdir(), "klipz-static-"));
   root = path.join(base, "storage");
   fs.mkdirSync(path.join(root, "sub dir"), { recursive: true });
   fs.writeFileSync(path.join(root, "a.mp4"), body);
@@ -21,6 +22,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await server.close();
+  fs.rmSync(base, { recursive: true, force: true });
 });
 
 describe("parseRange", () => {

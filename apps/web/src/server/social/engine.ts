@@ -46,6 +46,33 @@ export interface EngineDeps {
   backoff?: BackoffOptions;
   /** Test hook: runs right after publish() returned, before its result is saved (simulates a crash when it throws). */
   afterPublishCall?: (post: Post) => void;
+  /** How often the post lock is refreshed while a publish call is running (default LOCK_TTL_MS / 4). */
+  heartbeatMs?: number;
+  /** Clock used for heartbeat timestamps (default: wall clock; tests inject a fake one). */
+  clock?: () => Date;
+}
+
+/**
+ * Keep a post's lock fresh while a long upload runs so reclaimStale() never mistakes it for a dead
+ * process. Only the process that holds the lock beats; if the process dies the beat stops and the
+ * normal at-most-once reclaim (uncertain_outcome) applies after LOCK_TTL_MS.
+ */
+async function withHeartbeat<T>(postId: string, deps: EngineDeps, fn: () => Promise<T>): Promise<T> {
+  const every = deps.heartbeatMs ?? LOCK_TTL_MS / 4;
+  const timer = setInterval(() => {
+    try {
+      const t = iso((deps.clock ?? (() => new Date()))());
+      run("update posts set locked_at = ? where id = ? and status = 'publishing' and locked_at is not null", t, postId);
+    } catch {
+      /* a failed beat must never break the upload; the next one retries */
+    }
+  }, every);
+  timer.unref?.();
+  try {
+    return await fn();
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 export interface TickSummary {
@@ -212,7 +239,7 @@ async function processPost(id: string, mode: "publish" | "poll", now: Date, deps
   run("update posts set error_code = 'in_flight', error = null, updated_at = ? where id = ?", iso(now), id);
   let result;
   try {
-    result = await publisher.publish(ctx, { tokens, account: accountInfoOf(account), render: asset, meta });
+    result = await withHeartbeat(id, deps, () => publisher.publish(ctx, { tokens, account: accountInfoOf(account), render: asset, meta }));
   } catch (e) {
     return handleError(post, account, e, mode, now, deps);
   }

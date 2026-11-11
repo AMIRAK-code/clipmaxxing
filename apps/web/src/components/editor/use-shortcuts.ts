@@ -2,7 +2,7 @@
 
 import { OUT_FPS } from "@klipz/shared";
 import { useEffect } from "react";
-import { isTypingTarget, matchShortcut, nextShuttleRate } from "@/lib/editor/shortcuts";
+import { isTypingTarget, matchShortcut, nextShuttleRate, targetOwnsKey } from "@/lib/editor/shortcuts";
 import { durationFrames, type EditorCtx } from "./editor-context";
 
 export const TIMELINE_ZOOM_EVENT = "klipz:timeline-zoom";
@@ -24,8 +24,12 @@ export function useEditorShortcuts(ctx: EditorCtx): void {
       if (!action) return;
       const target = e.target as HTMLElement | null;
       if (document.querySelector("dialog[open]") && action !== "help") return;
-      if (isTypingTarget(target) && action !== "save") return;
-      if (action === "playPause" && target && (target.tagName === "BUTTON" || target.tagName === "A" || target.getAttribute("role") === "tab")) return;
+      // Typing fields keep everything except the save chord; sliders, selects, buttons, tabs ... keep the keys they use themselves.
+      if (target && isTypingTarget(target) && action !== "save") return;
+      if (target && !(e.ctrlKey || e.metaKey)) {
+        const own = targetOwnsKey({ tagName: target.tagName, isContentEditable: target.isContentEditable, type: (target as HTMLInputElement).type, role: target.getAttribute?.("role") }, e.key);
+        if (own) return;
+      }
       e.preventDefault();
 
       const edit = ctx.store.getState().edit;

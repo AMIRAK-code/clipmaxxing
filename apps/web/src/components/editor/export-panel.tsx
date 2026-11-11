@@ -74,7 +74,7 @@ export function ExportPanel({ initialRenders, initialJobs }: { initialRenders: R
         </Button>
         {unsaved ? <p className="text-xs text-warn">Unsaved edits are saved automatically before the export starts.</p> : null}
         {workerAlive === false ? (
-          <p className="text-xs text-warn">The worker is offline. The render is queued and starts when you run <code className="rounded bg-panel-2 px-1">npm run worker</code>.</p>
+          <p className="text-xs text-warn">The worker is offline. The render is queued and starts when the worker is running (start everything with <code className="rounded bg-panel-2 px-1">npm start</code> or <code className="rounded bg-panel-2 px-1">start-klipz.bat</code>).</p>
         ) : null}
         {error ? (
           <p role="alert" className="text-xs text-bad">

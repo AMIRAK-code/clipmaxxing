@@ -20,6 +20,8 @@ export interface OAuthDeps {
   ctx?: PublisherContext;
   secret?: string;
   now?: () => Date;
+  /** Sandbox / aggregator connects create accounts: only a same-origin POST may pass true (never a GET). */
+  allowCreate?: boolean;
 }
 
 export interface BeginResult {
@@ -38,7 +40,14 @@ export function safeMessage(e: unknown): string {
 
 export const accountsRedirect = (q: Record<string, string>): string => `/accounts?${new URLSearchParams(q).toString()}`;
 
+/** True when connecting creates an account directly (no provider round trip), so it must not happen on a GET. */
+export const connectCreatesAccount = (provider: Provider): boolean => sandboxMode() || routedViaAggregator(provider);
+
 export async function beginOAuth(provider: Provider, deps: OAuthDeps = {}): Promise<BeginResult> {
+  if (!deps.publisher && !deps.allowCreate && connectCreatesAccount(provider)) {
+    // A GET (e.g. a cross-site <img src>) must never create anything: just send the person back to /accounts.
+    return { redirectTo: accountsRedirect({ connect: provider }) };
+  }
   if (sandboxMode() && !deps.publisher) {
     createSandboxAccount(provider);
     return { redirectTo: accountsRedirect({ connected: provider, n: "1" }) };

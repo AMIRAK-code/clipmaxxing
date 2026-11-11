@@ -39,6 +39,41 @@ export function isTypingTarget(t: { tagName?: string; isContentEditable?: boolea
   return false;
 }
 
+export interface TargetLike {
+  tagName?: string;
+  isContentEditable?: boolean;
+  type?: string;
+  role?: string | null;
+}
+
+const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
+const SPACE_KEYS = new Set([" ", "Spacebar"]);
+/** ARIA roles whose widgets handle arrow/Home/End themselves (roving focus, sliders, ...). */
+const NAV_ROLES = new Set(["slider", "tab", "radio", "option", "listbox", "menu", "menuitem", "menuitemradio", "menuitemcheckbox", "spinbutton", "scrollbar", "tree", "treeitem", "combobox", "radiogroup", "tablist", "grid", "gridcell"]);
+const SPACE_ROLES = new Set(["button", "checkbox", "switch", "tab", "radio", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "link"]);
+
+/**
+ * True when the focused element does something of its own with this key (a range slider uses the
+ * arrow keys, a select opens on Space, a button is pressed with Space, a contenteditable types ...),
+ * so an editor shortcut must leave the event alone. Ctrl/Cmd chords are not asked here.
+ */
+export function targetOwnsKey(t: TargetLike | null | undefined, key: string): boolean {
+  if (!t) return false;
+  if (isTypingTarget(t)) return true;
+  const tag = (t.tagName ?? "").toUpperCase();
+  const type = (t.type ?? "").toLowerCase();
+  const role = (t.role ?? "").toLowerCase();
+  if (tag === "INPUT") {
+    if (type === "range") return NAV_KEYS.has(key);
+    if (type === "radio") return NAV_KEYS.has(key) || SPACE_KEYS.has(key);
+    return SPACE_KEYS.has(key); // checkbox, button, color, file ...
+  }
+  if ((tag === "BUTTON" || tag === "A" || tag === "SUMMARY") && SPACE_KEYS.has(key)) return true;
+  if (role && NAV_ROLES.has(role) && NAV_KEYS.has(key)) return true;
+  if (role && SPACE_ROLES.has(role) && SPACE_KEYS.has(key)) return true;
+  return false;
+}
+
 /** Map a key event to an editor action, or null. Does not look at the target; see isTypingTarget. */
 export function matchShortcut(e: KeyLike): ShortcutAction | null {
   const mod = Boolean(e.ctrlKey || e.metaKey);

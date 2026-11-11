@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { HttpError, ok, route } from "@/server/http";
-import { MAX_ASSET_BYTES, validateAssetUpload } from "@/server/assets";
+import { MAX_ASSET_BYTES, MAX_MULTIPART_BYTES, validateAssetUpload } from "@/server/assets";
 import { ensureParent, storagePath } from "@/server/paths";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 /**
  * Upload a b-roll / audio asset. Two body shapes:
  *  - raw: the file bytes with `x-filename` (URL-encoded) and its content-type (streamed to disk)
- *  - multipart/form-data with a `file` field
+ *  - multipart/form-data with a `file` field (capped at 8 MB; it is buffered in memory)
  * Stored as assets/<uuid>.<ext>. Returns { key, kind, size }; duration is read by the browser.
  */
 export const POST = route(async (req) => {
@@ -19,10 +19,12 @@ export const POST = route(async (req) => {
   const declared = Number(req.headers.get("content-length") ?? "") || null;
 
   if (ctype.startsWith("multipart/form-data")) {
-    if (declared && declared > MAX_ASSET_BYTES + 1024 * 1024) throw new HttpError(413, "File is larger than 500 MB");
+    // formData() buffers the whole body in memory: refuse anything big before reading it (raw upload streams to disk).
+    if (!declared || declared > MAX_MULTIPART_BYTES + 64 * 1024) throw new HttpError(413, "Multipart uploads are limited to 8 MB; send the file as a raw body with x-filename instead");
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) throw new HttpError(400, 'Missing "file" field');
+    if (file.size > MAX_MULTIPART_BYTES) throw new HttpError(413, "Multipart uploads are limited to 8 MB; send the file as a raw body with x-filename instead");
     const check = validateAssetUpload({ name: file.name, type: file.type, size: file.size });
     const dest = ensureParent(storagePath(check.key));
     await pipeline(Readable.fromWeb(file.stream() as never), fs.createWriteStream(dest));
