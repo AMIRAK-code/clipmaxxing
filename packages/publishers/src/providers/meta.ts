@@ -7,13 +7,13 @@
  *  - Error codes:        https://developers.facebook.com/docs/graph-api/guides/error-handling
  */
 import { PublishError } from '../errors';
-import { httpRequest, type AssetSource, type ErrorMapper } from '../http';
+import { assetReadableStream, httpRequest, shouldStream, type AssetSource, type ErrorMapper } from '../http';
 import { buildAuthUrl, tokenSetFromOAuth } from '../oauth';
 import type { PublisherContext, TokenSet } from '../types';
 import { asArray, asRecord, bool, num, reportProgress, str, toArrayBuffer } from '../util';
 
 /** Default Graph API version (override with config.extra.graphVersion; Meta's docs currently show v27.0). */
-export const DEFAULT_GRAPH_VERSION = 'v23.0';
+export const DEFAULT_GRAPH_VERSION = 'v27.0';
 
 export function graphVersion(ctx: PublisherContext): string {
   const v = ctx.config.extra?.graphVersion?.trim();
@@ -158,10 +158,24 @@ export async function fetchMetaPages(ctx: PublisherContext, userToken: string): 
 
 /**
  * Upload the whole file to a rupload.facebook.com session in one request
- * (`Authorization: OAuth`, `offset: 0`, `file_size`). The file is read into memory once;
- * Reels are capped at 300 MB (Instagram) / ~1 GB (Facebook) by validate().
+ * (`Authorization: OAuth`, `offset: 0`, `file_size`).
+ * Files above STREAM_THRESHOLD_BYTES are streamed (ReadableStream body, duplex "half", Content-Length set)
+ * so memory stays bounded; smaller files, or `config.extra.uploadMode = "buffer"`, go as one buffer.
+ * Streaming was NOT verified against the live Meta endpoints.
  */
 export async function ruploadBinary(ctx: PublisherContext, url: string, token: string, source: AssetSource): Promise<unknown> {
+  if (shouldStream(ctx, source.size)) {
+    const res = await httpRequest(ctx, {
+      method: 'POST',
+      url,
+      headers: { Authorization: `OAuth ${token}`, offset: '0', file_size: String(source.size), 'Content-Type': 'application/octet-stream', 'Content-Length': String(source.size) },
+      body: assetReadableStream(ctx, source),
+      duplex: 'half',
+      mapError: metaError,
+    });
+    reportProgress(ctx, 100);
+    return res.data;
+  }
   const bytes = await source.readChunk(0, source.size);
   if (bytes.byteLength !== source.size) {
     throw new PublishError('Could not read the whole render file', { code: 'asset_read_mismatch', retryable: true });

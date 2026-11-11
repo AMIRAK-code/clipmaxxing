@@ -31,8 +31,10 @@ export interface HttpRequestOptions {
   json?: unknown;
   /** x-www-form-urlencoded body. */
   form?: Record<string, string | number | boolean | undefined>;
-  /** Raw body (ArrayBuffer, FormData, string ...). */
+  /** Raw body (ArrayBuffer, FormData, string, ReadableStream ...). */
   body?: BodyInit;
+  /** Required by Node fetch when `body` is a ReadableStream. */
+  duplex?: 'half';
   /** Extra statuses (besides 2xx) to treat as success, e.g. 308 for resumable uploads. */
   okStatuses?: number[];
   mapError?: ErrorMapper;
@@ -130,6 +132,7 @@ export async function httpRequest<T = unknown>(ctx: PublisherContext, req: HttpR
   const init: RequestInit = { method, headers };
   if (body !== undefined) init.body = body;
   if (ctx.signal) init.signal = ctx.signal;
+  if (req.duplex) (init as RequestInit & { duplex: 'half' }).duplex = req.duplex;
 
   let res: Response;
   try {
@@ -269,6 +272,83 @@ export async function withAssetSource<T>(
   } finally {
     await source.close().catch(() => {});
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Streaming request bodies (bounded memory)                            */
+/* ------------------------------------------------------------------ */
+
+/** Files at or below this size are sent as a single in-memory buffer (fast path). */
+export const STREAM_THRESHOLD_BYTES = 8 * 1024 * 1024;
+const STREAM_CHUNK_BYTES = 1024 * 1024;
+
+/** `config.extra.uploadMode = "buffer"` restores the old read-everything-into-memory behaviour. */
+export function shouldStream(ctx: PublisherContext, size: number): boolean {
+  if (ctx.config.extra?.uploadMode === 'buffer') return false;
+  return size > STREAM_THRESHOLD_BYTES;
+}
+
+/** Pull-based stream over [0, source.size): at most one ~1 MiB chunk is in memory at a time. */
+export function assetReadableStream(ctx: PublisherContext, source: AssetSource, chunkBytes = STREAM_CHUNK_BYTES): ReadableStream<Uint8Array> {
+  let offset = 0;
+  const total = source.size;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (offset >= total) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + chunkBytes, total);
+      const bytes = await source.readChunk(offset, end);
+      if (bytes.byteLength !== end - offset) {
+        controller.error(new PublishError('Render read returned fewer bytes than expected', { code: 'asset_read_mismatch', retryable: true }));
+        return;
+      }
+      offset = end;
+      controller.enqueue(bytes);
+      reportProgress(ctx, (offset / total) * 100);
+      if (offset >= total) controller.close();
+    },
+  });
+}
+
+/**
+ * Streaming multipart/form-data body: text fields, then one file part streamed from `source`.
+ * Content-Length is computed up front (head + file size + tail).
+ */
+export function streamingMultipart(
+  ctx: PublisherContext,
+  fields: Array<[string, string]>,
+  file: { field: string; filename: string; contentType: string; source: AssetSource },
+): { body: ReadableStream<Uint8Array>; contentType: string; contentLength: number } {
+  const boundary = `----klipz${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+  const esc = (v: string): string => v.replace(/[\r\n"]/g, (c) => (c === '"' ? '%22' : ' '));
+  const enc = new TextEncoder();
+  const head = enc.encode(
+    fields.map(([k, v]) => `--${boundary}\r\nContent-Disposition: form-data; name="${esc(k)}"\r\n\r\n${v}\r\n`).join('') +
+      `--${boundary}\r\nContent-Disposition: form-data; name="${esc(file.field)}"; filename="${esc(file.filename)}"\r\nContent-Type: ${file.contentType}\r\n\r\n`,
+  );
+  const tail = enc.encode(`\r\n--${boundary}--\r\n`);
+  const inner = assetReadableStream(ctx, file.source).getReader();
+  let stage: 0 | 1 = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (stage === 0) {
+        stage = 1;
+        controller.enqueue(head);
+        return;
+      }
+      const { done, value } = await inner.read();
+      if (done) {
+        controller.enqueue(tail);
+        controller.close();
+        return;
+      }
+      controller.enqueue(value);
+    },
+    cancel: (reason) => inner.cancel(reason),
+  });
+  return { body, contentType: `multipart/form-data; boundary=${boundary}`, contentLength: head.byteLength + file.source.size + tail.byteLength };
 }
 
 export interface ByteRange {
