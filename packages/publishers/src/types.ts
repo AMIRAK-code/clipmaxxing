@@ -140,6 +140,8 @@ export interface Publisher {
   limits: PlatformLimits;
   /** Connect step 1: build the provider authorization URL. */
   getAuthUrl(ctx: PublisherContext, args: { state: string; codeChallenge?: string }): string;
+  /** How this provider expects the S256 code_challenge encoded (default RFC 7636 base64url; TikTok desktop: hex). */
+  pkceEncoding?: 'base64url' | 'hex';
   /** Connect step 2: exchange the code and discover publishable accounts. */
   connect(ctx: PublisherContext, args: { code: string; codeVerifier?: string }): Promise<ConnectResult>;
   refresh(ctx: PublisherContext, tokens: TokenSet): Promise<TokenSet>;

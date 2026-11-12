@@ -15,3 +15,5 @@ __pycache__/
 .DS_Store
 coverage/
 *.tsbuildinfo
+apps/desktop/bin/
+apps/desktop/obj/

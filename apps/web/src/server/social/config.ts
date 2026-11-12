@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { PROVIDERS, type Provider } from "@klipz/shared";
 import { aggregatorConfigFromEnv, type AggregatorConfig, type ProviderConfig } from "@klipz/publishers";
 import { dataDir } from "../paths";
+import { effectiveEnv, keySource } from "./app-keys";
 
 type Env = Record<string, string | undefined>;
 
@@ -88,7 +89,7 @@ function extras(provider: Provider, env: Env): Record<string, string> {
 }
 
 /** Provider config from env, or undefined when the client id / secret are not set. */
-export function providerConfig(provider: Provider, env: Env = process.env): ProviderConfig | undefined {
+export function providerConfig(provider: Provider, env: Env = effectiveEnv()): ProviderConfig | undefined {
   const vars = credentialVars(provider);
   const clientId = env[vars.id]?.trim();
   const clientSecret = env[vars.secret]?.trim();
@@ -98,7 +99,7 @@ export function providerConfig(provider: Provider, env: Env = process.env): Prov
 }
 
 /** Config used for calls that never reach a real platform (sandbox) or go through the aggregator. */
-export function configOrPlaceholder(provider: Provider, env: Env = process.env): ProviderConfig {
+export function configOrPlaceholder(provider: Provider, env: Env = effectiveEnv()): ProviderConfig {
   return providerConfig(provider, env) ?? { clientId: "", clientSecret: "", redirectUri: redirectUriFor(provider, env), extra: extras(provider, env) };
 }
 
@@ -112,16 +113,18 @@ export interface ProviderStatus {
   missing: string[];
   viaAggregator: boolean;
   redirectUri: string;
+  /** Where the developer-app keys come from: environment/.env.local, keys entered in the app, or none. */
+  keySource: "env" | "app" | null;
 }
 
 /** Which providers can be connected right now. Never includes secret values. */
-export function providerStatus(env: Env = process.env): Record<Provider, ProviderStatus> {
+export function providerStatus(env: Env = effectiveEnv(), rawEnv: Env = process.env): Record<Provider, ProviderStatus> {
   const out = {} as Record<Provider, ProviderStatus>;
   for (const provider of PROVIDERS) {
     const vars = credentialVars(provider);
     const viaAggregator = routedViaAggregator(provider, env);
     const missing = [vars.id, vars.secret].filter((k) => !env[k]?.trim());
-    out[provider] = { configured: viaAggregator || missing.length === 0, missing: viaAggregator ? [] : missing, viaAggregator, redirectUri: redirectUriFor(provider, env) };
+    out[provider] = { configured: viaAggregator || missing.length === 0, missing: viaAggregator ? [] : missing, viaAggregator, redirectUri: redirectUriFor(provider, env), keySource: missing.length ? null : keySource(provider, rawEnv) };
   }
   return out;
 }

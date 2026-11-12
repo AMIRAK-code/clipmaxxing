@@ -47,10 +47,15 @@ export function decryptToken(enc: string, keyB64: string): string {
   }
 }
 
-/** PKCE (RFC 7636) verifier + S256 challenge. */
-export function createPkce(): { codeVerifier: string; codeChallenge: string } {
+/**
+ * PKCE pair. RFC 7636 S256 is base64url(SHA256(verifier)); TikTok's desktop Login Kit instead requires the
+ * HEX encoding of SHA256 ("You must use hex encoding of SHA256 to generate the code challenge",
+ * developers.tiktok.com/doc/login-kit-desktop, checked 2026-11-12), still with method S256.
+ */
+export function createPkce(encoding: 'base64url' | 'hex' = 'base64url'): { codeVerifier: string; codeChallenge: string } {
   const codeVerifier = b64u(randomBytes(32));
-  const codeChallenge = b64u(createHash('sha256').update(codeVerifier).digest());
+  const digest = createHash('sha256').update(codeVerifier).digest();
+  const codeChallenge = encoding === 'hex' ? digest.toString('hex') : b64u(digest);
   return { codeVerifier, codeChallenge };
 }
 
