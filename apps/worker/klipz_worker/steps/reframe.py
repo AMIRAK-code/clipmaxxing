@@ -103,6 +103,28 @@ def words_in_range(transcript: Optional[dict[str, Any]], start: float, end: floa
     return [w for w in transcript.get("words") or [] if float(w["e"]) > start and float(w["s"]) < end]
 
 
+def _refresh_smart_edit(ctx: JobContext, clip: dict[str, Any]) -> None:
+    """A clip whose automatic edit was dropped because its range changed (trim) gets a fresh one.
+    Only clips the person never edited (edit_version 0, no edit) are touched."""
+    if not ctx.settings.smart_edit or clip.get("edit_state") is not None or int(clip.get("edit_version") or 0) != 0:
+        return
+    try:
+        from . import smart_edit
+
+        tr = ctx.db.one("transcripts", "select * from transcripts where source_video_id = ?", clip["source_video_id"])
+        if not tr or not tr.get("words"):
+            return
+        edit = smart_edit.build_edit(
+            tr["words"], float(clip["start_sec"]), float(clip["end_sec"]),
+            keywords=(clip.get("score_breakdown") or {}).get("keywords") or [],
+            hook=clip.get("hook"), style_id=clip.get("caption_style_id") or None,
+        )
+        ctx.db.update("clips", clip["id"], {"edit_state": edit})
+        clip["edit_state"] = edit
+    except Exception as e:  # noqa: BLE001
+        log.warning("smart edit refresh failed for clip %s (%s)", clip.get("id"), e)
+
+
 def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Optional[Detector] = None,
             cfg: Optional[PlanConfig] = None) -> dict[str, Any]:
     """Compute and store clips.crop_track. Returns the track. Skips when one exists unless force."""
@@ -110,6 +132,7 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
     clip = db.get("clips", clip_id)
     if clip is None:
         raise PermanentError(f"clip {clip_id} was deleted; nothing to reframe")
+    _refresh_smart_edit(ctx, clip)
     if clip.get("crop_track") and not force:
         ctx.progress(1.0, "Reframe already done", force=True)
         return clip["crop_track"]

@@ -289,9 +289,16 @@ def test_faster_whisper_falls_back_to_cpu(monkeypatch, tmp_path):
         return "model"
 
     monkeypatch.setattr(t, "_load", fake_load)
-    monkeypatch.setattr(t, "_run", lambda m, a, d, p: {"language": "en", "words": [], "model": "x"})
+    # the audio is decoded once by our own ffmpeg (not PyAV) and passed to the model as samples
+    import numpy as np
+    from klipz_worker import ffmpeg as ff
+
+    seen: list = []
+    monkeypatch.setattr(ff, "decode_mono_16k", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(t, "_run", lambda m, a, d, p: seen.append(a) or {"language": "en", "words": [], "model": "x"})
     assert t.transcribe(tmp_path / "a.wav", 1.0, lambda p: None)["model"] == "x"
     assert calls == [("cuda", "float16"), ("cpu", "int8")]
+    assert isinstance(seen[0], np.ndarray) and seen[0].dtype == np.float32
 
 
 # ── full analyze ────────────────────────────────────────────────────────
@@ -340,7 +347,12 @@ def test_analyze_full_flow(settings, db, project, sample_video):
     assert scores == sorted(scores, reverse=True)
     for c in clips:
         assert c["status"] == "candidate" and c["caption_style_id"] == "bold-outline"
-        assert c["crop_track"] is None and c["edit_state"] is None
+        assert c["crop_track"] is None
+        # Smart Edit is on by default: every new clip gets an automatic edit inside its own range, version 0
+        edit = c["edit_state"]
+        assert edit["version"] == 1 and int(c["edit_version"] or 0) == 0
+        assert all(c["start_sec"] - 1e-6 <= p["srcStart"] < p["srcEnd"] <= c["end_sec"] + 1e-6 for p in edit["video"])
+        assert edit["captions"]["words"] and edit["progressBar"]["enabled"] is True
         assert 15 - 1 <= c["end_sec"] - c["start_sec"] <= 91 and c["title"] and c["hook"] and c["reason"]
         assert c["score_breakdown"]["scorer"] == "heuristic" and "keywords" in c["score_breakdown"]
     for a in clips:

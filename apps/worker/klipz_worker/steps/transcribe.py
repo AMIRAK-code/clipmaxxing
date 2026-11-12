@@ -43,9 +43,9 @@ class FasterWhisperTranscriber:
 
         return WhisperModel(self.model_name, device=device, compute_type=compute_type)
 
-    def _run(self, model: Any, audio_path: Path, duration: float, on_progress: ProgressFn) -> dict[str, Any]:
+    def _run(self, model: Any, audio: Any, duration: float, on_progress: ProgressFn) -> dict[str, Any]:
         segments, info = model.transcribe(
-            str(audio_path), word_timestamps=True, vad_filter=True, beam_size=5, condition_on_previous_text=False
+            audio, word_timestamps=True, vad_filter=True, beam_size=5, condition_on_previous_text=False
         )
         words: list[dict[str, Any]] = []
         for s in segments:  # generator: inference happens here
@@ -67,11 +67,20 @@ class FasterWhisperTranscriber:
             attempts = [("cuda", "float16"), ("cpu", "int8")]
         else:
             attempts = [("cuda", "float16"), ("cpu", "int8")]
+        # Decode once with our own ffmpeg and hand Whisper the samples (no PyAV involved, see decode_mono_16k).
+        from .. import ffmpeg
+
+        try:
+            audio = ffmpeg.decode_mono_16k(audio_path)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"transcription failed: could not read the audio ({e})") from e
+        if audio.size == 0:
+            raise RuntimeError("transcription failed: the file has no audio")
         last: Optional[Exception] = None
         for device, ctype in attempts:
             try:
                 model = self._load(device, ctype)
-                return self._run(model, audio_path, duration, on_progress)
+                return self._run(model, audio, duration, on_progress)
             except Exception as e:  # noqa: BLE001 - any load/inference error falls through to CPU
                 log.warning("faster-whisper on %s/%s failed (%s); trying next option", device, ctype, e)
                 last = e

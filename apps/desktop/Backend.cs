@@ -76,7 +76,18 @@ internal sealed class Backend : IDisposable
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APP_URL"))) env["APP_URL"] = Url;
 
         Launch("worker", venvPython, ["-u", "-m", "klipz_worker.main", "--port", WorkerPort.ToString()], _paths.WorkerDir, env);
-        Launch("web", _paths.NodeExe, [_paths.NextBin, "start", "-H", "127.0.0.1", "-p", Port.ToString()], _paths.WebDir, env);
+        // Installed app: Next's standalone server (starts in about a second). Repo checkout: `next start`.
+        var standalone = Path.Combine(_paths.WebDir, "server.js");
+        if (File.Exists(standalone))
+        {
+            env["PORT"] = Port.ToString();
+            env["HOSTNAME"] = "127.0.0.1";
+            Launch("web", _paths.NodeExe, [standalone], _paths.WebDir, env);
+        }
+        else
+        {
+            Launch("web", _paths.NodeExe, [_paths.NextBin, "start", "-H", "127.0.0.1", "-p", Port.ToString()], _paths.WebDir, env);
+        }
     }
 
     private void Launch(string name, string exe, string[] args, string cwd, Dictionary<string, string> env)

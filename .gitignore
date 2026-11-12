@@ -17,3 +17,4 @@ coverage/
 *.tsbuildinfo
 apps/desktop/bin/
 apps/desktop/obj/
+packages/video/prebuilt/

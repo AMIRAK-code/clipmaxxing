@@ -58,35 +58,60 @@ fs.mkdirSync(path.join(stage, "runtime", "node"), { recursive: true });
 fs.copyFileSync(process.execPath, path.join(stage, "runtime", "node", "node.exe"));
 log(`bundled node ${process.version}`);
 
-// 5. App code: only what runs. node_modules is installed fresh (production only, real folders instead of
-// workspace junctions that would point back into this repo).
-for (const f of ["package.json", "package-lock.json"]) fs.copyFileSync(path.join(root, f), path.join(appDir, f));
+// 5. App code: only what runs.
+const web = path.join(root, "apps", "web");
+const standalone = path.join(web, ".next", "standalone");
+if (!fs.existsSync(path.join(standalone, "apps", "web", "server.js"))) throw new Error("apps/web/.next/standalone is missing: next.config.ts must set output: \"standalone\".");
+// 5a. Web: Next's self-contained server (traced files only) + static assets + public.
+copyDir(standalone, appDir, (rel) => /(^|\/)\.env/.test(rel));
+copyDir(path.join(web, ".next", "static"), path.join(appDir, "apps", "web", ".next", "static"));
+copyDir(path.join(web, "public"), path.join(appDir, "apps", "web", "public"));
+// 5b. Database migrations and the Python worker.
 copyDir(path.join(root, "db"), path.join(appDir, "db"));
-copyDir(path.join(root, "packages"), path.join(appDir, "packages"), (rel) => /(^|\/)node_modules(\/|$)|\.test\.ts$|(^|\/)testing(\/|$)/.test(rel));
 copyDir(path.join(root, "apps", "worker"), path.join(appDir, "apps", "worker"), (rel) => /(^|\/)(tests|__pycache__|\.pytest_cache)(\/|$)|^pytest\.ini$|\.pyc$/.test(rel));
-copyDir(path.join(root, "apps", "web"), path.join(appDir, "apps", "web"), (rel) => /^\.next\/cache(\/|$)|(^|\/)node_modules(\/|$)|\.test\.tsx?$|^\.env/.test(rel));
+// 5c. Renderer: render.mjs + a Remotion bundle built now (no webpack/bundler in the installed app).
+const videoOut = path.join(appDir, "packages", "video");
+fs.mkdirSync(videoOut, { recursive: true });
+for (const f of ["render.mjs", "package.json"]) fs.copyFileSync(path.join(root, "packages", "video", f), path.join(videoOut, f));
+copyDir(path.join(root, "packages", "video", "lib"), path.join(videoOut, "lib"));
+sh(process.execPath, [path.join(root, "scripts", "prebuild-remotion.mjs"), path.join(videoOut, "prebuilt")]);
+// 5d. node_modules for render.mjs: the dependency closure of @remotion/renderer, copied from this tree.
+(function copyClosure(entry) {
+  const nm = path.join(root, "node_modules");
+  const seen = new Set();
+  const resolveDep = (fromDir, name) => {
+    for (let dir = fromDir; dir.startsWith(nm); dir = path.dirname(dir)) {
+      const candidate = path.join(dir, "node_modules", name);
+      if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
+      if (dir === nm) break;
+    }
+    const top = path.join(nm, name);
+    return fs.existsSync(path.join(top, "package.json")) ? top : null;
+  };
+  const visit = (pkgDir) => {
+    if (seen.has(pkgDir)) return;
+    seen.add(pkgDir);
+    const dest = path.join(appDir, "node_modules", path.relative(nm, pkgDir));
+    if (!fs.existsSync(path.join(dest, "package.json"))) copyDir(pkgDir, dest, (rel) => /^node_modules(\/|$)/.test(rel));
+    const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+    for (const [name, optional] of [...Object.keys(pj.dependencies ?? {}).map((n) => [n, false]), ...Object.keys(pj.optionalDependencies ?? {}).map((n) => [n, true])]) {
+      const dep = resolveDep(pkgDir, name);
+      if (dep) visit(dep);
+      else if (!optional) throw new Error(`Cannot resolve ${name} (needed by ${pkgDir})`);
+    }
+  };
+  visit(path.join(nm, ...entry.split("/")));
+  log(`renderer closure: ${seen.size} packages`);
+})("@remotion/renderer");
 
-sh("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: appDir });
-
-// npm links workspaces with junctions that hold ABSOLUTE paths (they would point into dist/ after install).
-// Replace them with real copies; @klipz/web is the app itself and is not imported by anything.
-const scope = path.join(appDir, "node_modules", "@klipz");
-for (const name of fs.readdirSync(scope)) {
-  const link = path.join(scope, name);
-  if (!fs.lstatSync(link).isSymbolicLink()) continue;
-  const target = path.resolve(scope, fs.readlinkSync(link));
-  fs.rmSync(link, { recursive: false, force: true });
-  if (name !== "web") copyDir(target, link, (rel) => /(^|\/)node_modules(\/|$)/.test(rel));
-}
-
-// Sanity: no symlink/junction may remain in node_modules.
+// Sanity: no symlink/junction may remain (npm workspace junctions hold absolute paths into this repo).
 (function checkLinks(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isSymbolicLink()) throw new Error(`Link left in the stage: ${p} -> ${fs.readlinkSync(p)}`);
     if (e.isDirectory()) checkLinks(p);
   }
-})(path.join(appDir, "node_modules"));
+})(appDir);
 
 const size = (d) => {
   let n = 0;
@@ -96,7 +121,8 @@ const size = (d) => {
   }
   return n;
 };
-log(`stage ready: ${stage} (${(size(stage) / 1024 ** 2).toFixed(0)} MB)`);
+const count = (d) => fs.readdirSync(d, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? count(path.join(d, e.name)) : 1), 0);
+log(`stage ready: ${stage} (${(size(stage) / 1024 ** 2).toFixed(0)} MB, ${count(stage)} files)`);
 if (stageOnly) process.exit(0);
 
 // 6. Installer.
