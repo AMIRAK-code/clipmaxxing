@@ -193,6 +193,25 @@ Views, likes, comments and shares for published posts over 7/30/90 days: totals,
 - **Error log**: recent server errors.
 - **Danger zone**: disconnect all accounts, and **Delete all data** (empties the database tables and everything in `storage`, drops stored tokens; keeps the database file, schema and secret keys; cannot be undone; posts already published stay on the platforms).
 
+### AI tab and Smart Edit
+
+The **AI** page chooses what finds and edits clips, without touching any file:
+
+- **Engine**: Automatic, Smart Edit only (never calls a model), Claude (Anthropic API key), OpenAI-compatible (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server: base URL + optional key + model), or a Local model through Ollama. Each has a **Test** button; the Ollama one lists the installed models.
+- **Import a model file**: give the full path of a `.gguf` file on this PC and a name; KLIPZ registers it with Ollama (`ollama create`) and selects it. Ollama must be installed and running.
+- Keys are stored encrypted in `<data dir>i-settings.json` and are never shown again. Environment variables / `.env.local` win over the page and are shown as locked. Changes apply to the next job, no restart.
+
+**Smart Edit** is the built-in automatic editor and is on by default, with or without an AI model. For every new clip it cuts dead air (pauses over 0.45 s) and isolated "um / uh", alternates the framing slightly on each cut, punches in on keywords, numbers and shouted words, emphasises those words in the captions, and turns on the hook card and the progress bar. The result is a normal edit you can change in the editor; a clip you never edited gets a fresh Smart Edit if you trim it or run Find clips again. Without an AI model the clips themselves are chosen by the built-in scorer (hook strength, standalone-ness, emotional intensity, payoff, audio energy, scene cuts).
+
+### Library
+
+The **Library** page lists your files with real names and shows where they are on disk:
+
+- `<data dir>\Library\Raw videos\<title>.mp4`: every uploaded or imported video.
+- `<data dir>\Library\Clips\<project>\<clip title>.mp4`: the latest finished export of each clip.
+
+Per file: **Play**, **Show in Explorer**, **Copy file** (puts the file on the clipboard: paste it into WhatsApp, Telegram, Discord, an email or a folder) and, in the desktop app, **Share** (the Windows share sheet). The entries are hard links to the files KLIPZ already stores, so they use no extra disk space; deleting one there does not delete the video in KLIPZ.
+
 ## 5. Configuration
 
 KLIPZ works with no configuration. Settings are environment variables. Where to put them:
@@ -223,7 +242,11 @@ Worker (root `.env.local`):
 | `WHISPER_DEVICE` | `auto` | `auto`, `cuda` or `cpu`. CUDA failures fall back to CPU |
 | `TRANSCRIBER` | `auto` | `auto`, `whisperx` or `faster-whisper`. The WhisperX path needs `whisperx` installed (see `requirements-gpu.txt`) |
 | `HF_TOKEN` | empty | Hugging Face token, only for WhisperX diarization (speaker labels) |
-| `LLM_PROVIDER` | `auto` | Scorer: `auto` (Anthropic if a key is set, else Ollama if a model is set, else heuristic), `anthropic`, `ollama`, `none` |
+| `LLM_PROVIDER` | `auto` | Scorer: `auto` (Anthropic if a key is set, else an OpenAI-compatible API if a model is set, else Ollama if a model is set, else the built-in engine), `anthropic`, `openai`, `ollama`, `none` |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible chat API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server |
+| `OPENAI_API_KEY` | empty | Key for that API (leave empty for a local server) |
+| `OPENAI_MODEL` | empty | Model name; scoring through this API is off while empty |
+| `KLIPZ_SMART_EDIT` | `1` | `0` turns off Smart Edit (automatic jump cuts, punch-ins, emphasis, hook card, progress bar on new clips) |
 | `ANTHROPIC_API_KEY` | empty | Enables Claude scoring (worker) and AI captions (web). Paid |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Model id for both |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Local Ollama server |

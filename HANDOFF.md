@@ -13,7 +13,7 @@ Everything under "Done, NOT yet committed" is in the working tree only.
 
 ## Done, NOT yet committed (all tests green at time of writing)
 
-Tests: `npx vitest run` = 473 passed. Worker: `KLIPZ_SLOW_TESTS=1 <venv python> -m pytest -q` in
+Tests: `npx vitest run` = 482 passed. Worker: `KLIPZ_SLOW_TESTS=1 <venv python> -m pytest -q` in
 `apps/worker` = 138 passed, 1 skipped (venv = `%USERPROFILE%\.klipz\venv`). `npm run typecheck` clean.
 
 1. **Startup / size (measured)**
@@ -51,35 +51,37 @@ Tests: `npx vitest run` = 473 passed. Worker: `KLIPZ_SLOW_TESTS=1 <venv python> 
      after a trim; web `server/clips.ts` clears an untouched auto edit when the range changes.
    - Tests: `apps/worker/tests/test_smart_edit.py`, updated `tests/test_analyze.py`.
 
+6. **Library page** (`/library`, sidebar "Library"): `apps/web/src/server/library.ts` keeps
+   `<data dir>\Library\Raw videos\<title>.mp4` and `Library\Clips\<project>\<clip>.mp4` as hard links
+   (manifest `.klipz-links.json`, only its own links are ever removed). Routes `/api/library` (GET) and
+   `/api/library/action` (reveal | open | copy, targets are ids, never paths). UI
+   `components/library/library-view.tsx`. Native Windows share sheet: `apps/desktop/ShareSheet.cs`, called
+   from the page via `window.chrome.webview.postMessage({type:"share", path, title})`; the shell accepts it
+   only from localhost pages and only for files under `<data dir>\Library` or `\storage`.
+   The desktop project now targets `net10.0-windows10.0.19041.0` (WinRT share APIs).
+7. Web tests: `server/library.test.ts`, `server/ai-settings.test.ts`, trim rule in `server/server.test.ts`.
+8. Docs: README sections "AI tab and Smart Edit" and "Library", new env vars in `.env.example`.
+9. Version 0.1.1 (root `package.json`, `apps/desktop/KlipzDesktop.csproj`).
+
+Verified on the staged build (`dist/desktop/stage`): server start ~0.8 s, `/library` and `/ai` pages,
+AI settings save/test (key never in file or response), library copy/reveal, cross-site requests blocked,
+and a real render through `packages/video/prebuilt` (1080x1920 H.264/AAC, captions + hook card drawn).
+
 ## Still to do (in this order)
 
-1. **Library / folders page** (requested, not started): a page that shows where raw (imported/downloaded)
-   videos and rendered (edited) clips are stored, lists them, and for each file/folder offers
-   "Show in Explorer", "Open", "Copy file" and "Share" (Windows share sheet / other apps).
-   - Storage: `<data dir>\storage\` (`sources/<id>/source.*` raw, renders under `renders/`; check
-     `apps/web/src/server/paths.ts` and the `renders` / `source_videos` tables for keys).
-   - Plan: server routes that only accept storage keys (resolve with `storagePath()`, never raw paths) and
-     run `explorer.exe /select,<path>`; share through the desktop shell (WebView2
-     `window.chrome.webview.postMessage` -> C# share UI / "Open with"), with copy-to-clipboard as fallback
-     when running in a plain browser.
-2. **Web tests** for `ai-settings.ts` (store round trip, view never contains keys, `activeEngine`) and the
-   new `planClipPatch` rule (auto edit cleared on range change only at version 0).
-3. **Look at the AI tab in the real UI** (browser pane) and fix layout issues.
-4. **Desktop shell**: start WebView2 initialisation in parallel with the backend (small win).
-5. **Docs**: README (AI tab, Smart Edit, standalone build, new env vars `OPENAI_*`, `KLIPZ_SMART_EDIT`),
-   `.env.example`, `docs/platform-setup.md` unchanged.
-6. **Rebuild + verify**: `node scripts/build-desktop.mjs` (stage + installer), silent install to a temp dir,
-   launch, check `/ai`, `/accounts`, a render with the prebuilt bundle (NOT yet verified end to end: the
-   prebuilt Remotion bundle and the renderer-only `node_modules` have only been built, not rendered with).
-7. **Commit + push** to `desktop-app` (commit trailer: `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`),
-   then replace the release asset: `gh release upload v0.1.0 dist/desktop/KLIPZ-Setup-0.1.0.exe --clobber`
-   (or cut `v0.1.1`: bump `version` in root `package.json` and `apps/desktop/KlipzDesktop.csproj`).
+1. Build installer 0.1.1 (`node scripts/build-desktop.mjs --skip-web-build`), silent-install it to a temp
+   dir, launch, check `/library` and `/ai` respond, uninstall.
+2. Commit + push to `desktop-app` (trailer `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`),
+   create release `v0.1.1` with `dist/desktop/KLIPZ-Setup-0.1.1.exe` as a normal (latest) release.
+3. Nice to have: start WebView2 initialisation in parallel with the backend in `MainForm.StartAsync`.
 
 ## Not verified / known gaps
 
 - Real sign-in and posting with TikTok / Instagram / X accounts (needs the owner's developer apps).
 - First-run Python setup on a clean PC. The user's PC has Python 3.12 venv at `%USERPROFILE%\.klipz\venv`;
   requirements changed (yt-dlp[default], cryptography), so the app re-runs pip on next start.
+- The Windows share sheet (`ShareSheet.cs`) compiles but has not been clicked through in the running
+  desktop window (no way to drive the native window from the build session).
 - GGUF import was not run against a real Ollama install (Ollama is not installed on this PC).
 - OpenAI-compatible scorer tested only against a fake client.
 

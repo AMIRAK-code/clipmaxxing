@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, Clapperboard, Send, Settings, Sparkles, Users } from "lucide-react";
+import { BarChart3, Clapperboard, FolderOpen, Send, Settings, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useJobs } from "@/hooks/use-jobs";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Projects", icon: Clapperboard, match: (p: string) => p === "/" || p.startsWith("/projects") || p.startsWith("/clips") },
+  { href: "/library", label: "Library", icon: FolderOpen, match: (p: string) => p.startsWith("/library") },
   { href: "/posts", label: "Posts", icon: Send, match: (p: string) => p.startsWith("/posts") || p.startsWith("/compose") },
   { href: "/accounts", label: "Accounts", icon: Users, match: (p: string) => p.startsWith("/accounts") },
   { href: "/analytics", label: "Analytics", icon: BarChart3, match: (p: string) => p.startsWith("/analytics") },
