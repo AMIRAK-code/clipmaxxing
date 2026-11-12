@@ -43,7 +43,7 @@ const minor = Number(process.versions.node.split(".")[1]);
 if (major < 22 || (major === 22 && minor < 5)) throw new Error("Build with Node 22.5 or newer: it becomes the app's bundled runtime and node:sqlite is required.");
 
 // 1. Web production build (in the dev tree; .next is copied below).
-if (!skipWebBuild) sh("npm", ["run", "build"], { cwd: root });
+if (!skipWebBuild) sh("npm", ["run", "build"], { cwd: root, env: { ...process.env, KLIPZ_STANDALONE: "1" } });
 if (!fs.existsSync(path.join(root, "apps", "web", ".next", "BUILD_ID"))) throw new Error("apps/web/.next is missing: the web build did not run.");
 
 // 2. Fresh stage.
@@ -61,7 +61,7 @@ log(`bundled node ${process.version}`);
 // 5. App code: only what runs.
 const web = path.join(root, "apps", "web");
 const standalone = path.join(web, ".next", "standalone");
-if (!fs.existsSync(path.join(standalone, "apps", "web", "server.js"))) throw new Error("apps/web/.next/standalone is missing: next.config.ts must set output: \"standalone\".");
+if (!fs.existsSync(path.join(standalone, "apps", "web", "server.js"))) throw new Error("apps/web/.next/standalone is missing: build the web app with KLIPZ_STANDALONE=1 (run this script without --skip-web-build).");
 // 5a. Web: Next's self-contained server (traced files only) + static assets + public.
 copyDir(standalone, appDir, (rel) => /(^|\/)\.env/.test(rel));
 copyDir(path.join(web, ".next", "static"), path.join(appDir, "apps", "web", ".next", "static"));

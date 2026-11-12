@@ -1,7 +1,7 @@
-# KLIPZ handoff: work in progress (updated 2026-11-12)
+# KLIPZ handoff (updated 2026-11-12, after release v0.1.1)
 
-State of the work on branch `desktop-app` (PR #1 into `main`, release `v0.1.0` pre-release).
-Everything under "Done, NOT yet committed" is in the working tree only.
+State of the work on branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release, slow first
+build) and `v0.1.1` (current). Everything listed below is committed and in `v0.1.1`.
 
 ## Already shipped (committed + in release v0.1.0)
 
@@ -11,7 +11,7 @@ Everything under "Done, NOT yet committed" is in the working tree only.
   `/api/platform-keys/[provider]`, `components/accounts/app-keys-form.tsx`).
 - TikTok Desktop Login Kit PKCE (hex SHA-256 challenge, `pkceEncoding` on publishers).
 
-## Done, NOT yet committed (all tests green at time of writing)
+## In v0.1.1 (all tests green)
 
 Tests: `npx vitest run` = 482 passed. Worker: `KLIPZ_SLOW_TESTS=1 <venv python> -m pytest -q` in
 `apps/worker` = 138 passed, 1 skipped (venv = `%USERPROFILE%\.klipz\venv`). `npm run typecheck` clean.
@@ -67,19 +67,82 @@ Verified on the staged build (`dist/desktop/stage`): server start ~0.8 s, `/libr
 AI settings save/test (key never in file or response), library copy/reveal, cross-site requests blocked,
 and a real render through `packages/video/prebuilt` (1080x1920 H.264/AAC, captions + hook card drawn).
 
-## Still to do (in this order)
+10. Desktop shell: one instance per data folder (`Program.cs`: default folder keeps the legacy mutex name,
+    a custom `KLIPZ_DATA_DIR` gets its own), WebView2 starts while the server boots (`MainForm.cs`).
+11. `output: "standalone"` only when `KLIPZ_STANDALONE=1` (set by `scripts/build-desktop.mjs`), so
+    `npm run build` / `npm start` (`next start`) behave as before.
 
-1. Build installer 0.1.1 (`node scripts/build-desktop.mjs --skip-web-build`), silent-install it to a temp
-   dir, launch, check `/library` and `/ai` respond, uninstall.
-2. Commit + push to `desktop-app` (trailer `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`),
-   create release `v0.1.1` with `dist/desktop/KLIPZ-Setup-0.1.1.exe` as a normal (latest) release.
-3. Nice to have: start WebView2 initialisation in parallel with the backend in `MainForm.StartAsync`.
+### How v0.1.1 was verified
+
+- `npx vitest run`: 482 passed. Worker `pytest` with `KLIPZ_SLOW_TESTS=1`: 138 passed (real Whisper tiny).
+- `node scripts/e2e.mjs`: 19/19 steps (upload, ingest, transcription, AutoClip + Smart Edit, reframe,
+  three renders, edit + re-export, sandbox posting to six platforms, scheduling, analytics).
+- First run of the staged `KLIPZ.exe` (the folder the installer packages) on an empty data folder, own
+  ports: found Python 3.12, created the venv, installed the new requirements, both services up (260 s,
+  web "Ready in 328 ms"). Then through its HTTP API: upload -> AutoClip -> Smart Edit (8 pieces, 28.1 s
+  -> 21.1 s, 14 zoom keys) -> 1080x1920 render -> Library files on disk. The owner also ran a real
+  YouTube import + AutoClip (Italian video, 4 clips) in that instance: import 36 s, analysis 27 s.
+- Closing the window stopped both services (ports closed).
+- NOT done: running `KLIPZ-Setup-0.1.1.exe` itself. It shares its AppId with the owner's installed 0.1.0,
+  so a test install would have repointed their Start-menu shortcut / uninstall entry. The 0.1.0 installer
+  (same script) was install/launch/uninstall tested earlier.
+
+## Next: fast renderer (FFmpeg, no Chrome)
+
+Rendering is now the slow part: 71-117 s per ~20 s clip on the owner's laptop (i7-1255U, Intel UHD).
+Measured on the same Smart-Edited clip (21.1 s, 8 pieces, 14 zoom keys):
+
+| Renderer | Time |
+|---|---|
+| Remotion/Chrome, PNG frames (current) | 100 s |
+| Remotion/Chrome, JPEG frames | 86 s |
+| Remotion/Chrome, PNG + `gl: angle` | 99 s |
+| Remotion/Chrome, JPEG + `gl: angle` | 79 s |
+| FFmpeg only, libx264 medium crf 18 | 11.2 s |
+| FFmpeg only, libx264 veryfast crf 18 | 5.3 s |
+| FFmpeg only, h264_qsv | 6.8 s |
+
+Tuning Chrome is not worth it (max 21 %, and JPEG frames come out full-range, which is why PNG was chosen).
+The FFmpeg timing came from a throwaway script (trim+concat of the pieces, static 9:16 crop, word captions
+burned in with libass, progress bar via `overlay` with a time expression); it is not in the repo.
+
+Plan for a real "Fast render" engine in the worker (`steps/render_ffmpeg.py`), chosen per render:
+
+- Input is the same props as `build_props()` (EditState + crop track). Output must pass the same checks as
+  the Remotion path (1080x1920, yuv420p limited range, 30 fps, faststart, loudness pass unchanged).
+- Pieces: `trim`/`atrim` + `concat`. Crop track: per-segment crop or letterbox with blurred background
+  (`split`, `boxblur`, `overlay`), keyframes as piecewise-linear `x`/`y` expressions (or `sendcmd`).
+- Zoom keys: `scale` with `eval=frame` + centred `crop`, honouring `snap` / `ease` like `zoomAt()`.
+- Captions: generate ASS from `captionWordsOnTimeline()` semantics and the caption style (font, size,
+  colours, outline/box, highlight colour, words per page, position; pop-in via `	` scale). Fonts are in
+  `apps/web/public/fonts` (woff2: ship TTF copies or use `fontsdir` with converted files).
+- Hook card: ASS drawing (`\p1`) rounded box + text. Progress bar: `color` source + `overlay` x expression.
+- Fall back to the Remotion renderer whenever the edit uses something the fast engine does not do yet:
+  b-roll, audio items, text overlays, piece transitions, looks, emoji captions, gradient/glow presets.
+- UI: Export panel choice "Fast" (default when supported) / "Studio (Chrome)"; show which engine rendered.
+- Tests: golden-frame comparisons against the Remotion output at a few timestamps (SSIM threshold), plus
+  the existing e2e with the fast engine.
+
+## Small follow-ups
+
+- `apps/desktop/PythonEnv.cs` says "~2 GB download"; measured: about 440 MB of wheels, 885 MB installed.
+  Change the text on the next shell build (README already says about 1 GB).
+- First use still downloads silently inside jobs: ffmpeg binaries (static-ffmpeg, first job), the Whisper
+  model (first transcription, ~460 MB for `small`), Chrome Headless Shell (first render). Prefetching them
+  in the first-run screen with visible progress would remove those stalls.
+- With a custom `KLIPZ_DATA_DIR` the web status looks for ffmpeg in `~/.klipz/venv`
+  (`server/data-admin.ts::findStaticFfmpeg`) while the shell puts the venv in `<data dir>env`; pass
+  `KLIPZ_VENV` from `Backend.cs`.
+- The owner's test session (Italian video, 4 clips) is in `%TEMP%\klipz-firstrun` (data folder of the
+  first-run test). It was left in place on purpose.
 
 ## Not verified / known gaps
 
 - Real sign-in and posting with TikTok / Instagram / X accounts (needs the owner's developer apps).
-- First-run Python setup on a clean PC. The user's PC has Python 3.12 venv at `%USERPROFILE%\.klipz\venv`;
-  requirements changed (yt-dlp[default], cryptography), so the app re-runs pip on next start.
+- First-run Python setup on a PC with no Python at all (the winget install path). With Python 3.12
+  present it is verified (see "How v0.1.1 was verified").
+- The upgrade install of `KLIPZ-Setup-0.1.1.exe` over an installed 0.1.0 (the owner does this). On the
+  first start after upgrading, the app re-runs pip because the requirements changed.
 - The Windows share sheet (`ShareSheet.cs`) compiles but has not been clicked through in the running
   desktop window (no way to drive the native window from the build session).
 - GGUF import was not run against a real Ollama install (Ollama is not installed on this PC).

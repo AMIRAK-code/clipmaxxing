@@ -32,6 +32,7 @@ internal sealed class MainForm : Form
 
     private AppPaths? _paths;
     private Backend? _backend;
+    private Task? _webInit;
     private readonly CancellationTokenSource _cts = new();
 
     public MainForm()
@@ -98,10 +99,13 @@ internal sealed class MainForm : Form
             _backend?.Dispose();
             _backend = new Backend(_paths);
             _backend.Crashed += msg => BeginInvoke(() => ShowError(msg, _backend?.RecentOutput()));
+            // Bring up the browser engine while the server boots instead of after it.
+            if (_webInit is { IsFaulted: true } or { IsCanceled: true }) _webInit = null;
+            _webInit ??= InitWebViewAsync(_paths);
             _backend.Start(_paths.VenvPython);
             await _backend.WaitReadyAsync(TimeSpan.FromMinutes(5), _cts.Token);
 
-            await InitWebViewAsync(_paths);
+            await _webInit;
             _web.CoreWebView2.Navigate(_backend.Url + "/");
             _overlay.Visible = false;
         }
