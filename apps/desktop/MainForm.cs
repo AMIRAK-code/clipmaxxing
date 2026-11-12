@@ -94,12 +94,12 @@ internal sealed class MainForm : Form
                 if (!await RunFirstTimeSetupAsync(_paths)) return;
             }
 
-            SetStatus("Starting the editor and the video worker ...");
+            SetStatus("Starting the editor and the video worker ... (the first start after installing can take a minute or two while Windows scans the new files)");
             _backend?.Dispose();
             _backend = new Backend(_paths);
             _backend.Crashed += msg => BeginInvoke(() => ShowError(msg, _backend?.RecentOutput()));
             _backend.Start(_paths.VenvPython);
-            await _backend.WaitReadyAsync(TimeSpan.FromSeconds(120), _cts.Token);
+            await _backend.WaitReadyAsync(TimeSpan.FromMinutes(5), _cts.Token);
 
             await InitWebViewAsync(_paths);
             _web.CoreWebView2.Navigate(_backend.Url + "/");
