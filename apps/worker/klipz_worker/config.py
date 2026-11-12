@@ -44,11 +44,17 @@ class Settings:
     transcriber: str = os.environ.get("TRANSCRIBER", "auto")  # auto | whisperx | faster-whisper
     hf_token: str = os.environ.get("HF_TOKEN", "")
     # scoring
-    llm_provider: str = os.environ.get("LLM_PROVIDER", "auto")  # auto | anthropic | ollama | none
+    llm_provider: str = os.environ.get("LLM_PROVIDER", "auto")  # auto | anthropic | openai | ollama | none
     anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
     anthropic_model: str = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
     ollama_url: str = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
     ollama_model: str = os.environ.get("OLLAMA_MODEL", "")
+    # any OpenAI-compatible chat API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server, vLLM ...
+    openai_base_url: str = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    openai_api_key: str = os.environ.get("OPENAI_API_KEY", "")
+    openai_model: str = os.environ.get("OPENAI_MODEL", "")
+    # Smart Edit: automatic jump cuts, punch-in zooms, emphasis, hook card and progress bar on new clips
+    smart_edit: bool = os.environ.get("KLIPZ_SMART_EDIT", "1").strip().lower() not in ("0", "false", "no", "off")
     # optional paid extras – off unless a key is present
     elevenlabs_api_key: str = os.environ.get("ELEVENLABS_API_KEY", "")
     source_retention_days: int = int(os.environ.get("SOURCE_RETENTION_DAYS", "30"))

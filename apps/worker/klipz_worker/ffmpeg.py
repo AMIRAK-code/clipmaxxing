@@ -170,6 +170,19 @@ def scene_cuts(src: Path, threshold: float = SCENE_STRONG, on_progress: Optional
     return pick_cuts(scene_scores(src, on_progress), threshold)
 
 
+def decode_mono_16k(path: Path | str) -> np.ndarray:
+    """Any audio/video file -> float32 mono samples at 16 kHz (what Whisper takes), decoded by our own ffmpeg.
+
+    faster-whisper would otherwise decode the file itself through PyAV, and its call breaks whenever PyAV
+    changes its API (PyAV 19 removed `metadata_errors`: "open() got an unexpected keyword argument")."""
+    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
+           "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise FfmpegError(f"ffmpeg could not decode the audio: {proc.stderr.decode(errors='replace')[-800:]}")
+    return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
     with wave.open(str(path), "rb") as wf:
         sr = wf.getframerate()

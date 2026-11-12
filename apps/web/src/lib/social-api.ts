@@ -6,6 +6,7 @@ export interface ProviderStatusDto {
   missing: string[];
   viaAggregator: boolean;
   redirectUri: string;
+  keySource: "env" | "app" | null;
 }
 
 export interface AccountsResponse {

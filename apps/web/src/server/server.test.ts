@@ -121,6 +121,16 @@ describe("clip patch planning", () => {
     expect(p.rangeChanged).toBe(true);
   });
 
+  it("drops an untouched automatic edit when the range changes, never a person's edit", () => {
+    const auto = planClipPatch({ start_sec: 10, end_sec: 30, edit_version: 0 }, 100, { end_sec: 25 });
+    expect(auto.columns).toMatchObject({ edit_state: null, crop_track: null });
+    expect(auto.bumpVersion).toBe(false);
+    const mine = planClipPatch(clip, 100, { end_sec: 25 }); // edit_version 2: the person edited it
+    expect("edit_state" in mine.columns).toBe(false);
+    const same = planClipPatch({ start_sec: 10, end_sec: 30, edit_version: 0 }, 100, { title: "x" });
+    expect("edit_state" in same.columns).toBe(false);
+  });
+
   it("enforces 1 s minimum and 180 s maximum", () => {
     expect(() => planClipPatch(clip, 1000, { end_sec: 10.5 })).toThrow(HttpError);
     expect(() => planClipPatch(clip, 1000, { start_sec: 0, end_sec: MAX_CLIP_SEC + 1 })).toThrow(/at most/);
