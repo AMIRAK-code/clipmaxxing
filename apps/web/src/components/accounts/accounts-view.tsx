@@ -2,9 +2,10 @@
 
 import type { Provider, SocialAccount } from "@klipz/shared";
 import { PROVIDERS } from "@klipz/shared";
-import { AlertTriangle, FlaskConical, Plug, RefreshCw, Unplug } from "lucide-react";
+import { AlertTriangle, FlaskConical, KeyRound, Plug, RefreshCw, Trash2, Unplug } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppKeysForm } from "@/components/accounts/app-keys-form";
 import { ConfirmDialog } from "@/components/project/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -140,6 +141,11 @@ export function AccountsView() {
               onSandbox={() => void addSandbox(p)}
               onConnectPost={() => void connectViaPost(p)}
               onDisconnect={(a) => setConfirm(a)}
+              onKeysChanged={(msg) => {
+                void load();
+                toast("success", msg);
+              }}
+              onKeysError={(msg) => toast("error", msg)}
             />
           ))}
         </div>
@@ -167,6 +173,8 @@ function ProviderCard({
   onSandbox,
   onConnectPost,
   onDisconnect,
+  onKeysChanged,
+  onKeysError,
 }: {
   provider: Provider;
   data: AccountsResponse;
@@ -174,7 +182,18 @@ function ProviderCard({
   onSandbox: () => void;
   onConnectPost: () => void;
   onDisconnect: (a: SocialAccount) => void;
+  onKeysChanged: (message: string) => void;
+  onKeysError: (message: string) => void;
 }) {
+  const [editingKeys, setEditingKeys] = useState(false);
+  const removeKeys = async () => {
+    try {
+      await api(`/api/platform-keys/${provider}`, { method: "DELETE" });
+      onKeysChanged(`${PROVIDER_META[provider].label} app keys removed.`);
+    } catch (e) {
+      onKeysError(e instanceof Error ? e.message : "Could not remove the keys");
+    }
+  };
   const meta = PROVIDER_META[provider];
   const status = data.providers[provider];
   const accounts = data.accounts.filter((a) => a.provider === provider);
@@ -207,17 +226,28 @@ function ProviderCard({
         </div>
       </div>
 
-      {!status.configured ? (
-        <p id={`why-${provider}`} className="rounded-lg border border-line bg-bg p-2.5 text-xs text-muted" data-testid={`unconfigured-${provider}`}>
-          Not configured: set {status.missing.map((m, i) => (
-            <span key={m}>
-              {i > 0 ? " and " : ""}
-              <code className="rounded bg-panel-2 px-1 text-fg">{m}</code>
-            </span>
-          ))}{" "}
-          in <code className="rounded bg-panel-2 px-1">apps/web/.env.local</code>, restart KLIPZ, and add{" "}
-          <code className="break-all rounded bg-panel-2 px-1 text-fg">{status.redirectUri}</code> as the redirect URI in the platform&apos;s developer console. See README → Platform setup.
-        </p>
+      {!status.configured || editingKeys ? (
+        <div id={`why-${provider}`} data-testid={`unconfigured-${provider}`}>
+          <AppKeysForm
+            provider={provider}
+            redirectUri={status.redirectUri}
+            onSaved={() => {
+              setEditingKeys(false);
+              onKeysChanged(`${meta.label} app keys saved. Press Connect to sign in.`);
+            }}
+            {...(editingKeys ? { onCancel: () => setEditingKeys(false) } : {})}
+          />
+        </div>
+      ) : status.keySource === "app" && !data.sandbox ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+          <KeyRound className="h-3.5 w-3.5" aria-hidden /> Using the app keys saved in KLIPZ.
+          <button type="button" className="text-accent-2 underline" onClick={() => setEditingKeys(true)}>
+            Change
+          </button>
+          <button type="button" className="inline-flex items-center gap-1 text-bad underline" onClick={() => void removeKeys()}>
+            <Trash2 className="h-3 w-3" aria-hidden /> Remove
+          </button>
+        </div>
       ) : null}
 
       {accounts.length === 0 ? (

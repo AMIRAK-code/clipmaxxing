@@ -274,6 +274,8 @@ function postUrl(account: AccountInfo, postId: string | undefined): string | und
 export const tiktokPublisher: Publisher = {
   provider: 'tiktok',
   limits: PLATFORM_LIMITS.tiktok,
+  // KLIPZ is a desktop app with an http://localhost redirect: TikTok's Desktop Login Kit (PKCE required, hex challenge).
+  pkceEncoding: 'hex',
 
   getAuthUrl(ctx, args) {
     return buildAuthUrl(AUTH_URL, {

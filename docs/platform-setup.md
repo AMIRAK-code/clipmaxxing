@@ -6,7 +6,7 @@ Common to all platforms:
 
 - Open the app, go to **Accounts**. It shows, per platform, whether it is configured, which env variables are missing, and the exact **redirect URI** to register.
 - Default redirect URI: `http://localhost:3000/api/oauth/<provider>/callback`, where `<provider>` is `youtube`, `tiktok`, `instagram`, `facebook`, `x` or `linkedin`. If you start KLIPZ on another port (`KLIPZ_PORT`) the launcher sets `APP_URL` to match; if you use an HTTPS tunnel, set `APP_URL=https://your-tunnel.example` and the URIs become `${APP_URL}/api/oauth/<provider>/callback`. Register exactly what the Accounts page shows (no trailing slash).
-- Put keys in `apps/web/.env.local` (or the repo-root `.env.local`; the web app reads both and `apps/web/.env.local` wins), then restart KLIPZ.
+- Paste the keys into the platform's card on the **Accounts** page (no restart; the secret is encrypted in `<data dir>/platform-keys.json`). This is the only way in the installed desktop app. Alternatively put them in `apps/web/.env.local` (or the repo-root `.env.local`; the web app reads both and `apps/web/.env.local` wins) and restart KLIPZ; environment values win over keys entered in the app.
 - Tokens are encrypted at rest (AES-256-GCM) with a key in `<data dir>/secret.key` (or `TOKEN_ENCRYPTION_KEY`). Back that file up with the database, or you must reconnect every account.
 - No tokens ever go anywhere except the platform they belong to.
 
@@ -38,7 +38,7 @@ Before review:
 
 1. developers.tiktok.com: create an app. Add the products **Login Kit** and **Content Posting API** (turn on **Direct Post**). Add yourself as a Target User in the Sandbox.
 2. Scopes: `user.info.basic`, `video.publish`, `video.list`.
-3. Register the redirect URI. **TikTok web login requires an HTTPS redirect on a domain you registered**; `http://localhost` is rejected. Two ways:
+3. Register the redirect URI. Choose the **Desktop** platform for the app: TikTok's Desktop Login Kit accepts `http://localhost:<port>/...` redirects (loopback host, explicit port) and requires PKCE with a **hex**-encoded SHA-256 challenge, which KLIPZ sends (docs checked 2026-11-12: https://developers.tiktok.com/doc/login-kit-desktop). Register exactly `http://localhost:3000/api/oauth/tiktok/callback` (the Accounts page shows it). If you registered the app as **Web** instead, TikTok requires an HTTPS redirect on a domain you own, and `http://localhost` is rejected. Then use one of these:
    - HTTPS tunnel (cloudflared, ngrok, ...) pointing at 127.0.0.1:3000, then set `APP_URL=https://your-tunnel.example` and register `https://your-tunnel.example/api/oauth/tiktok/callback`. The tunnel exposes your local app to the internet while it is up; KLIPZ has no login, so keep the tunnel closed except while connecting, or protect it (the app only accepts requests whose Host matches `APP_URL`/loopback, and mutating calls must be same-origin, but this is not a substitute for access control).
    - Or route TikTok through an aggregator (`AGGREGATOR_PROVIDERS=tiktok`, see below).
 4. `apps/web/.env.local`: `TIKTOK_CLIENT_ID=<client key>` and `TIKTOK_CLIENT_SECRET=...`

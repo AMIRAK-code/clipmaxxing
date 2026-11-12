@@ -17,7 +17,9 @@
     "worker": "node scripts/worker.mjs",
     "seed": "node scripts/seed.mjs",
     "fonts": "node scripts/copy-fonts.mjs",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "desktop:stage": "node scripts/build-desktop.mjs --stage-only",
+    "desktop:installer": "node scripts/build-desktop.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -17,6 +17,26 @@ Platform walkthroughs (developer apps, redirect URIs, review checklist): [docs/p
 
 ---
 
+## Desktop app (Windows installer)
+
+KLIPZ also ships as a normal Windows program: `KLIPZ-Setup-<version>.exe` installs it per user (no admin prompt) under `%LOCALAPPDATA%\Programs\KLIPZ` with a Start-menu entry and an optional desktop shortcut. It opens in its own window (a native .NET shell hosting the app in Microsoft Edge WebView2, which Windows 11 already has; no browser tab, no Electron). The installer bundles Node.js and the built app; it does not need Node, npm or the repo on the PC.
+
+- **First start** sets up the Python video worker in `%USERPROFILE%\.klipzenv` (a few minutes, about 2 GB of packages). It needs Python 3.11, 3.12 or 3.13; if none is found it offers to install Python 3.12 with winget. Updates that change the worker's requirements re-run this automatically.
+- **Connecting TikTok, Instagram, X ...** happens inside the window: on **Accounts**, paste your developer app's keys into the platform's card, press **Connect**, sign in on the platform's own page, approve, and you are back in KLIPZ. A bar at the top shows when you are on a platform's sign-in page, with a way back.
+- It listens on `http://localhost:3000` (the redirect URIs you register contain this port). If the port is taken it tells you instead of picking another one; set `KLIPZ_PORT` to change it.
+- Closing the window stops the web server, the worker and every render (they run in a Windows job object). Your data stays in `%USERPROFILE%\.klipz`; uninstalling does not delete it.
+- Logs: `%USERPROFILE%\.klipz\logs\desktop-web.log` and `desktop-worker.log`.
+
+Building it (needs Node 22.5+, the .NET 10 SDK and Inno Setup 6, `winget install -e --id JRSoftware.InnoSetup`):
+
+```
+npm install
+npm run desktop:installer      # -> dist\desktop\KLIPZ-Setup-<version>.exe
+npm run desktop:stage          # just the runnable folder: dist\desktop\stage\KLIPZ.exe
+```
+
+The shell's source is in `apps/desktop` (C#); the installer script is `installer/klipz.iss`.
+
 ## 1. Requirements
 
 - Windows 11 (the launcher is written for Windows; the code is mostly portable but only Windows was tested).
@@ -256,7 +276,7 @@ Test/script variables: `E2E_WEB_PORT` (3100), `E2E_WORKER_PORT` (8797), `E2E_TIM
 
 ## 6. Connecting platforms
 
-Short version: for each platform you want, create your own developer app, register the redirect URI shown on the **Accounts** page, put the client id/secret in `.env.local`, restart, and press Connect. Before the platform reviews your app, expect limits: YouTube uploads are locked private, TikTok is private only (and needs an HTTPS redirect), Meta works only for accounts with a role on your app, X needs a paid tier for video, LinkedIn posts to your profile. Full steps, scopes, the app-review checklist and the aggregator fallback are in [docs/platform-setup.md](docs/platform-setup.md).
+Short version: for each platform you want, create your own developer app, register the redirect URI shown on the **Accounts** page, paste the client id/secret into that platform's card on the **Accounts** page (or put them in `.env.local` and restart), and press Connect: the platform's own sign-in page opens, and after you approve you land back on Accounts with the account connected. Keys entered in the app are stored in `<data dir>\platform-keys.json` with the secret encrypted by `secret.key`; environment variables / `.env.local` win over them. Before the platform reviews your app, expect limits: YouTube uploads are locked private, TikTok is private only until audited (register the TikTok app as a Desktop app so the localhost redirect is accepted), Meta works only for accounts with a role on your app, X needs a paid tier for video, LinkedIn posts to your profile. Full steps, scopes, the app-review checklist and the aggregator fallback are in [docs/platform-setup.md](docs/platform-setup.md).
 
 To try the whole flow with no platform app, set `KLIPZ_PUBLISH_MOCK=1` (in `.env.local`), restart, and on the Accounts page press **Add sandbox account** for each platform.
 
