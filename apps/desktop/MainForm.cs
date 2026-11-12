@@ -169,10 +169,39 @@ internal sealed class MainForm : Form
             e.Handled = true;
             OpenExternal(e.Uri);
         };
+        // The Library page asks the shell to open the Windows share sheet for a file.
+        core.WebMessageReceived += OnWebMessage;
         // While on a platform's sign-in page, show where we are and a way back.
         core.SourceChanged += (_, _) => UpdateSigninBar();
         core.NavigationCompleted += (_, _) => UpdateSigninBar();
         core.DocumentTitleChanged += (_, _) => Text = string.IsNullOrWhiteSpace(core.DocumentTitle) ? "KLIPZ" : $"{core.DocumentTitle}";
+    }
+
+    /// <summary>
+    /// {type:"share", path, title} from the page. Only honoured when it comes from KLIPZ's own pages (never a
+    /// platform's sign-in page shown in this window) and only for a file inside KLIPZ's data folder.
+    /// </summary>
+    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            if (_paths is null || !Uri.TryCreate(e.Source, UriKind.Absolute, out var from) || !IsLocal(from)) return;
+            using var doc = System.Text.Json.JsonDocument.Parse(e.WebMessageAsJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+            if (!root.TryGetProperty("type", out var type) || type.GetString() != "share") return;
+            if (!root.TryGetProperty("path", out var p) || p.GetString() is not { Length: > 0 } raw) return;
+            var full = Path.GetFullPath(raw);
+            var allowed = new[] { Path.Combine(_paths.DataDir, "Library"), Path.Combine(_paths.DataDir, "storage") }
+                .Select(d => Path.GetFullPath(d) + Path.DirectorySeparatorChar);
+            if (!allowed.Any(d => full.StartsWith(d, StringComparison.OrdinalIgnoreCase)) || !File.Exists(full)) return;
+            var title = root.TryGetProperty("title", out var t) ? t.GetString() : null;
+            ShareSheet.Show(Handle, full, title);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Sharing is not available: {ex.Message}", "KLIPZ", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
     }
 
     private bool IsLocal(Uri u) => u.IsLoopback || u.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
