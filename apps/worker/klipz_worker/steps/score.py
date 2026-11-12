@@ -300,6 +300,41 @@ class OllamaScorer:
         return _rate_batched(self._call, cands, self.name)
 
 
+class OpenAICompatScorer:
+    """Any server that speaks POST {base}/chat/completions (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp ...)."""
+
+    name = "openai"
+
+    def __init__(self, base_url: str, api_key: str, model: str, client: Any = None):
+        self.url, self.api_key, self.model = base_url.rstrip("/"), api_key, model
+        self.client = client
+
+    def _call(self, cands: Sequence[Candidate]) -> Any:
+        import httpx
+
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT + " Answer with a single JSON object: "
+                 '{"ratings":[{"id":0,"hook":0,"context":0,"emotion":0,"payoff":0,"title":"","hook_line":"","reason":"","keywords":[]}]}'},
+                {"role": "user", "content": build_prompt(cands)},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+        headers = {"authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        post = self.client.post if self.client is not None else httpx.post
+        kwargs: dict[str, Any] = {} if self.client is not None else {"timeout": 300}
+        r = post(f"{self.url}/chat/completions", json=body, headers=headers, **kwargs)
+        if r.status_code == 400 and "response_format" in r.text:
+            body.pop("response_format")  # some local servers do not know json mode; the prompt still asks for JSON
+            r = post(f"{self.url}/chat/completions", json=body, headers=headers, **kwargs)
+        r.raise_for_status()
+        return _parse_json(r.json()["choices"][0]["message"]["content"])
+
+    def rate(self, cands: Sequence[Candidate]) -> list[Rating]:
+        return _rate_batched(self._call, cands, self.name)
+
+
 def _rate_batched(call: Any, cands: Sequence[Candidate], name: str) -> list[Rating]:
     """Rate in batches; ANY error (or missing/invalid items) falls back to heuristics for that part."""
     fallback = HeuristicScorer()
@@ -323,6 +358,9 @@ def pick_scorer(settings: Settings) -> Scorer:
             return AnthropicScorer(settings.anthropic_api_key, settings.anthropic_model)
         except Exception as e:  # noqa: BLE001
             log.warning("anthropic unavailable (%s)", e)
+    # a local server needs no key, so the model name is what marks it as configured
+    if prov in ("openai", "auto") and settings.openai_model and (settings.openai_api_key or prov == "openai" or "api.openai.com" not in settings.openai_base_url):
+        return OpenAICompatScorer(settings.openai_base_url, settings.openai_api_key, settings.openai_model)
     if prov in ("ollama", "auto") and settings.ollama_model:
         return OllamaScorer(settings.ollama_url, settings.ollama_model)
     return HeuristicScorer()

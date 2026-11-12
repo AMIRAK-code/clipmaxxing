@@ -7,6 +7,7 @@ from typing import Any, Optional
 from ..runner import JobContext, PermanentError
 from . import segment as seg
 from .ingest import ingest
+from . import smart_edit
 from .score import ScoredCandidate, pick_scorer, score_candidates
 from .select import overlap_fraction, select_top
 from .transcribe import transcribe
@@ -57,7 +58,10 @@ def analyze(
     doomed: list[str] = []
     if force:
         for c in existing:
-            if c["status"] == "candidate" and c.get("edit_state") is None:
+            # replaceable = never touched by the person: no edit, or only the automatic smart edit (version 0)
+            es = c.get("edit_state")
+            untouched_auto = isinstance(es, dict) and es.get("auto") is True and int(c.get("edit_version") or 0) == 0
+            if c["status"] == "candidate" and (es is None or untouched_auto):
                 doomed.append(c["id"])
             else:
                 protected.append(c)
@@ -73,7 +77,15 @@ def analyze(
         for cid in doomed:
             db.conn.execute("delete from clips where id = ?", (cid,))
         for s in chosen:
+            edit = None
+            if ctx.settings.smart_edit:
+                try:
+                    edit = smart_edit.build_edit(words, s.start, s.end, keywords=s.breakdown.get("keywords") or [],
+                                                 hook=s.hook, style_id="bold-outline")
+                except Exception as e:  # noqa: BLE001 - never lose the clips over an edit nicety
+                    log.warning("smart edit failed for %.1f-%.1f (%s); clip left unedited", s.start, s.end, e)
             ids.append(db.insert("clips", {
+                **({"edit_state": edit} if edit else {}),
                 "project_id": source["project_id"],
                 "source_video_id": source_video_id,
                 "start_sec": s.start,
@@ -92,7 +104,7 @@ def analyze(
         raise
     ctx.progress(1.0, f"Found {len(ids)} clips", force=True)
     return {"source_video_id": source_video_id, "clips_created": len(ids), "clip_ids": ids,
-            "candidates": len(cands), "scorer": sc.name}
+            "candidates": len(cands), "scorer": sc.name, "smart_edit": bool(ctx.settings.smart_edit)}
 
 
 def handle_analyze(ctx: JobContext) -> dict[str, Any]:

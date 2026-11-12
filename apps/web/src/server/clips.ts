@@ -64,6 +64,9 @@ export function planClipPatch(clip: Pick<Clip, "start_sec" | "end_sec" | "edit_v
       columns.start_sec = start;
       columns.end_sec = end;
       columns.crop_track = null; // the framing belongs to the old range
+      // An automatic Smart Edit nobody touched (version 0) was cut for the old range too: drop it, the
+      // reframe job that follows rebuilds it for the new range. A person's own edit is never discarded.
+      if (clip.edit_version === 0 && patch.edit_state === undefined) columns.edit_state = null;
       rangeChanged = true;
     }
   }

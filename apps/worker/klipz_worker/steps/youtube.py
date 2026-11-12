@@ -3,6 +3,7 @@ off to ingest. Only import videos you own or have the right to reuse."""
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -30,6 +31,13 @@ def download(url: str, dest_dir: Path, on_progress: Callable[[float], None]) -> 
                 on_progress(min(0.99, d.get("downloaded_bytes", 0) / total))
 
     opts = {
+        # Fragmented (HLS/DASH-segment) streams are fetched one piece at a time by default, which made a
+        # 2 GB import take 15+ minutes. Fetch 8 pieces in parallel, and ask for plain https in 10 MiB ranges
+        # (YouTube throttles a single long request).
+        "concurrent_fragment_downloads": 8,
+        "http_chunk_size": 10 * 1024 * 1024,
+        "noprogress": True,
+        "fragment_retries": 5,
         "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b",
         "merge_output_format": "mp4",
         "outtmpl": str(dest_dir / "source.%(ext)s"),
@@ -41,6 +49,11 @@ def download(url: str, dest_dir: Path, on_progress: Callable[[float], None]) -> 
         "retries": 3,
         "overwrites": True,
     }
+    # YouTube only offers its fast direct formats to clients that can run its player JavaScript. yt-dlp does
+    # that with an external runtime; KLIPZ already ships Node (first on PATH in the desktop app).
+    node = shutil.which("node")
+    if node:
+        opts["js_runtimes"] = {"node": {"path": node}}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     files = sorted(dest_dir.glob("source.*"), key=lambda p: p.stat().st_size, reverse=True)

@@ -65,7 +65,11 @@ export function sourceHash() {
   return h.digest("hex").slice(0, 16);
 }
 
+/** Bundle built at packaging time (scripts/build-desktop.mjs): the installed app ships it and has no bundler. */
+const PREBUILT_BUNDLE = path.join(here, "prebuilt");
+
 async function getBundle(cacheRoot) {
+  if (fs.existsSync(path.join(PREBUILT_BUNDLE, "index.html"))) return PREBUILT_BUNDLE;
   const { bundle } = await import("@remotion/bundler");
   return ensureBundle(cacheRoot, sourceHash(), async (outDir) => {
     emit({ type: "progress", progress: 0, stage: "bundling" });

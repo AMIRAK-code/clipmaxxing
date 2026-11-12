@@ -1,3 +1,4 @@
+import { aiEnv } from "../ai-settings";
 import { z } from "zod";
 import type { Clip, Provider } from "@klipz/shared";
 import { PROVIDERS } from "@klipz/shared";
@@ -177,7 +178,7 @@ async function makeClient(env: Record<string, string | undefined>): Promise<Anth
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
 export async function generateCaptions(req: CaptionRequest, deps: CaptionDeps = {}): Promise<CaptionResponse> {
-  const env = deps.env ?? process.env;
+  const env = deps.env ?? aiEnv();
   const clip = getClip(req.clipId) ?? (() => { throw new HttpError(404, "Clip not found"); })();
   const ctx = clipContext(clip);
   const providers = [...new Set(req.providers)];

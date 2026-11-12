@@ -77,7 +77,10 @@ class Runner:
         beat = _Heartbeat(self.settings, job["id"])
         beat.start()
         try:
-            result = self.handlers[job["type"]](JobContext(self.settings, self.db, job))
+            # AI tab settings (provider, keys, smart edit) are re-read for every job: no restart needed.
+            from .ai_settings import effective
+
+            result = self.handlers[job["type"]](JobContext(effective(self.settings), self.db, job))
             self.db.complete(job["id"], result)
             log.info("job %s succeeded", job["id"])
         except JobCancelled:

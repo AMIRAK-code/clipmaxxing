@@ -6,6 +6,9 @@ faster-whisper>=1.1
 mediapipe>=0.10.14
 opencv-python-headless>=4.10
 static-ffmpeg>=2.7
-yt-dlp>=2025.1.1
+# [default] pulls yt-dlp-ejs (YouTube player JS support, used with the bundled Node)
+yt-dlp[default]>=2025.10.22
 anthropic>=0.40
+# decrypts API keys saved on the AI tab (AES-256-GCM, same format as the web app)
+cryptography>=42
 pytest>=8
