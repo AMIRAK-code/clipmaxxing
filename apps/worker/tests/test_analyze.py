@@ -154,7 +154,13 @@ def test_final_score_formula():
     r = s.rating
     llm = 0.35 * r.hook + 0.2 * r.context + 0.2 * r.emotion + 0.25 * r.payoff
     f = features.window_features(energy, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], c.start, c.end)
-    assert s.score == pytest.approx(0.7 * llm + 0.2 * f["energy_score"] + 0.1 * f["cuts_score"], abs=0.02)
+    # what is said (60 %) + how it is delivered: audio hype and text hype (30 %) + pacing (10 %)
+    from klipz_worker.steps.score import text_hype
+
+    wps = sum(len(x.words) for x in c.sentences) / c.duration
+    hype = 0.6 * f["audio_hype"] + 0.4 * text_hype(c, wps)
+    assert s.breakdown["hype"] == pytest.approx(hype, abs=0.06)
+    assert s.score == pytest.approx(0.6 * llm + 0.3 * hype + 0.1 * f["cuts_score"], abs=0.05)
 
 
 def test_validate_ratings_clamps_and_rejects():

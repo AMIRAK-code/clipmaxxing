@@ -71,7 +71,8 @@ def ingest(ctx: JobContext, source_video_id: str) -> dict:
         cuts = ffmpeg.scene_cuts(path, on_progress=lambda p: ctx.progress(0.5 + 0.4 * p))
         db.update("source_videos", source_video_id, {"scene_cuts": cuts})
 
-    if source.get("energy") is None:
+    # older sources only have loudness; the hype score also wants brightness and spectral change
+    if source.get("energy") is None or int((source.get("energy") or {}).get("v") or 1) < ffmpeg.ENERGY_VERSION:
         ctx.progress(0.92, "Measuring loudness")
         db.update("source_videos", source_video_id, {"energy": ffmpeg.audio_energy(audio_path)})
 

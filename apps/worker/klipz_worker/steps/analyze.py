@@ -14,14 +14,22 @@ from .transcribe import transcribe
 
 log = logging.getLogger("klipz.analyze")
 
-DEFAULT_MAX_CLIPS = 8
+DEFAULT_MAX_CLIPS = 8  # kept for callers that pass an explicit number
 KEPT_OVERLAP = 0.5
+MIN_AUTO_CLIPS, MAX_AUTO_CLIPS = 10, 50
+ALT_OVERLAP = 0.34     # second pass: clips may share up to a third with one already picked
+
+
+def auto_clip_count(duration: float) -> int:
+    """How many potential clips to offer when nobody asked for a number: about one per 20 s of video,
+    at least 10 and at most 50. (Non-overlap decides how many a short video can really give.)"""
+    return int(min(MAX_AUTO_CLIPS, max(MIN_AUTO_CLIPS, round((duration or 0) / 20.0))))
 
 
 def analyze(
     ctx: JobContext,
     source_video_id: str,
-    max_clips: int = DEFAULT_MAX_CLIPS,
+    max_clips: Optional[int] = None,
     force: bool = False,
     scorer: Optional[Any] = None,
     retranscribe: bool = False,
@@ -43,6 +51,8 @@ def analyze(
 
     ctx.progress(0.6, "Finding moments", force=True)
     duration = float(source.get("duration_sec") or 0)
+    if max_clips is None:
+        max_clips = auto_clip_count(duration)
     words = transcript["words"]
     sentences = seg.build_sentences(words)
     cands = seg.generate_candidates(sentences, duration)
@@ -70,6 +80,10 @@ def analyze(
         if all(overlap_fraction(s.start, s.end, p["start_sec"], p["end_sec"]) <= KEPT_OVERLAP for p in protected)
     ]
     chosen = select_top(pool, max_clips)
+    if len(chosen) < max_clips:
+        # distinct moments first; then alternative cuts that share at most a third with a picked one
+        chosen += select_top([s for s in pool if s not in chosen], max_clips - len(chosen), ALT_OVERLAP, taken=chosen)
+        chosen.sort(key=lambda s: -s.score)
 
     ids: list[str] = []
     db.conn.execute("BEGIN IMMEDIATE")  # replace candidates atomically: a crash must not leave zero clips
@@ -111,9 +125,11 @@ def handle_analyze(ctx: JobContext) -> dict[str, Any]:
     sid = ctx.payload.get("source_video_id")
     if not sid:
         raise PermanentError("payload.source_video_id is required")
-    try:
-        max_clips = int(ctx.payload.get("max_clips") or DEFAULT_MAX_CLIPS)
-    except (TypeError, ValueError):
-        raise PermanentError("payload.max_clips must be an integer") from None
-    max_clips = max(1, min(50, max_clips))
+    raw = ctx.payload.get("max_clips")
+    max_clips: Optional[int] = None  # None = as many as the video's length suggests
+    if raw not in (None, "", 0):
+        try:
+            max_clips = max(1, min(100, int(raw)))
+        except (TypeError, ValueError):
+            raise PermanentError("payload.max_clips must be an integer") from None
     return analyze(ctx, sid, max_clips, bool(ctx.payload.get("force")), retranscribe=bool(ctx.payload.get("retranscribe")))

@@ -125,6 +125,24 @@ def _refresh_smart_edit(ctx: JobContext, clip: dict[str, Any]) -> None:
         log.warning("smart edit refresh failed for clip %s (%s)", clip.get("id"), e)
 
 
+FRAMINGS = ("speaker", "center", "fit")
+
+
+def framing_of(source: dict[str, Any]) -> str:
+    v = str(source.get("framing") or "speaker").lower()
+    return v if v in FRAMINGS else "speaker"
+
+
+def static_track(framing: str, start: float, end: float, src_w: int, src_h: int) -> dict[str, Any]:
+    """Crop track for the framings that do not look at the picture: `center` fills the screen with the
+    middle of the frame (gameplay, screen recordings), `fit` shows the whole frame over a blurred copy."""
+    if framing == "fit":
+        seg: dict[str, Any] = {"start": start, "end": end, "layout": "letterbox", "keys": []}
+    else:
+        seg = {"start": start, "end": end, "layout": "crop", "keys": [{"t": start, "cx": 0.5, "cy": 0.5}]}
+    return {"version": 1, "srcW": int(src_w), "srcH": int(src_h), "segments": [seg]}
+
+
 def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Optional[Detector] = None,
             cfg: Optional[PlanConfig] = None) -> dict[str, Any]:
     """Compute and store clips.crop_track. Returns the track. Skips when one exists unless force."""
@@ -146,6 +164,14 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
         db.update("source_videos", source["id"], {"width": info["width"], "height": info["height"]})
     src_w, src_h = int(source["width"]), int(source["height"])
     start, end = float(clip["start_sec"]), float(clip["end_sec"])
+
+    framing = framing_of(source)
+    if framing != "speaker":
+        # The person turned "keep the speaker centred" off for this video: no face tracking.
+        track = static_track(framing, start, end, src_w, src_h)
+        db.update("clips", clip_id, {"crop_track": track})
+        ctx.progress(1.0, "Reframed", force=True)
+        return track
 
     ctx.progress(0.02, "Reframing: finding faces", force=True)
     det = detector or default_detector(ctx.settings.data_dir)

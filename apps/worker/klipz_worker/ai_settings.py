@@ -20,7 +20,7 @@ from .config import Settings
 log = logging.getLogger("klipz.ai_settings")
 
 FILE_NAME = "ai-settings.json"
-PROVIDERS = ("auto", "anthropic", "openai", "ollama", "none")
+PROVIDERS = ("auto", "anthropic", "gemini", "openai", "custom", "ollama", "none")
 
 
 def _b64u(s: str) -> bytes:
@@ -97,6 +97,12 @@ def effective(settings: Settings) -> Settings:
     a, o, ol, el = _section(raw, "anthropic"), _section(raw, "openai"), _section(raw, "ollama"), _section(raw, "elevenlabs")
     fill("anthropic_api_key", "ANTHROPIC_API_KEY", unseal(a.get("keyEnc"), d))
     fill("anthropic_model", "ANTHROPIC_MODEL", _str(a.get("model")))
+    g, cu = _section(raw, "gemini"), _section(raw, "custom")
+    fill("gemini_api_key", "GEMINI_API_KEY", unseal(g.get("keyEnc"), d))
+    fill("gemini_model", "GEMINI_MODEL", _str(g.get("model")))
+    fill("custom_api_key", "CUSTOM_AI_API_KEY", unseal(cu.get("keyEnc"), d))
+    fill("custom_base_url", "CUSTOM_AI_BASE_URL", _str(cu.get("baseUrl")))
+    fill("custom_model", "CUSTOM_AI_MODEL", _str(cu.get("model")))
     fill("openai_api_key", "OPENAI_API_KEY", unseal(o.get("keyEnc"), d))
     fill("openai_base_url", "OPENAI_BASE_URL", _str(o.get("baseUrl")))
     fill("openai_model", "OPENAI_MODEL", _str(o.get("model")))

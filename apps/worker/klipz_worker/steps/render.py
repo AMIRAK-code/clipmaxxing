@@ -306,6 +306,58 @@ def verify_output(path: Path) -> dict[str, Any]:
     return info
 
 
+# ── engine choice ─────────────────────────────────────────────────────────────
+ENGINES = ("auto", "fast", "studio")
+
+
+def requested_engine(options: dict[str, Any], settings: Any) -> str:
+    """Per-render choice (Export panel) first, then the KLIPZ_RENDER_ENGINE default. `auto` and `fast` both
+    try the FFmpeg renderer and fall back to the Studio (Remotion / Chrome) renderer when it cannot draw
+    the edit; `studio` always uses Remotion."""
+    for value in (options.get("engine"), getattr(settings, "render_engine", None)):
+        v = str(value or "").strip().lower()
+        if v in ENGINES:
+            return v
+    return "auto"
+
+
+def render_video(ctx: JobContext, sub: JobContext, props: dict[str, Any], props_path: Path, raw: Path, cover: Path,
+                 work: Path, options: dict[str, Any]) -> tuple[str, Optional[str]]:
+    """Render to `raw` with the fast renderer when possible, else Remotion.
+    Returns (engine that produced the file, why the fast renderer was not used or None)."""
+    note: Optional[str] = None
+    if requested_engine(options, ctx.settings) != "studio":
+        from .. import fastrender
+
+        note = fastrender.unsupported_reason(props)
+        if note is None:
+            try:
+                src = ctx.settings.storage_path(str(props["sourceUrl"]))
+                ff, fp = ffmpeg.binaries()
+                has_audio = bool(ffmpeg.probe(src)["has_audio"])
+                sub.progress(0.0, "Rendering video (fast)", force=True)
+                fastrender.render(props, src, raw, work / "fast", ffmpeg=ff, ffprobe=fp, has_audio=has_audio,
+                                  on_progress=lambda f: sub.progress(f))
+                return "fast", None
+            except JobCancelled:
+                raise
+            except Exception as e:  # noqa: BLE001 - never lose a render to the fast path: Remotion can still do it
+                note = f"fast renderer failed: {str(e)[:300]}"
+                log.warning("%s; using the Studio renderer", note)
+                raw.unlink(missing_ok=True)
+        else:
+            log.info("fast renderer not used: %s", note)
+    for attempt in (1, 2):
+        try:
+            run_remotion(sub, props_path, raw, cover)
+            break
+        except RenderError as e:
+            if attempt == 2 or not _TRANSIENT.search(str(e)):
+                raise
+            log.warning("transient render error, retrying: %s", e)
+    return "studio", note
+
+
 # ── handler ──────────────────────────────────────────────────────────────────
 def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
     db = ctx.db
@@ -344,14 +396,11 @@ def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
         props_path.write_text(json.dumps(props), encoding="utf-8")
         raw, cover = work / "raw.mp4", work / "cover.jpg"
         sub = ctx.sub(0.12, 0.85)
-        for attempt in (1, 2):
-            try:
-                run_remotion(sub, props_path, raw, cover)
-                break
-            except RenderError as e:
-                if attempt == 2 or not _TRANSIENT.search(str(e)):
-                    raise
-                log.warning("transient render error, retrying: %s", e)
+        rendered_by, fast_note = render_video(ctx, sub, props, props_path, raw, cover, work, options)
+        current = (db.get("renders", render_id) or {}).get("options") or options
+        db.update("renders", render_id, {"options": {
+            **current, "rendered_by": rendered_by, **({"fast_skipped": fast_note} if fast_note else {}),
+        }})
         ctx.progress(0.86, "Normalising audio", force=True)
         final = work / "final.mp4"
         lufs = finalize(raw, final, denoise=bool(options.get("denoise")))
@@ -365,7 +414,8 @@ def render_clip(ctx: JobContext, render_id: str) -> dict[str, Any]:
         shutil.copyfile(final, part)
         os.replace(part, dest)
         if not cover.exists():
-            ffmpeg.extract_frame(dest, 1.0, cover, width=540)
+            # 1 s in, or the middle of a clip that is shorter than 2 s (there is no frame at 1.0 in a 1 s clip)
+            ffmpeg.extract_frame(dest, min(1.0, max(0.0, float(info["duration"]) / 2)), cover, width=540)
         cpart = dest_cover.with_name("cover.part.jpg")
         shutil.copyfile(cover, cpart)
         os.replace(cpart, dest_cover)

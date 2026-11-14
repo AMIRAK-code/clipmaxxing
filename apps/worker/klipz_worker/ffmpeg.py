@@ -194,16 +194,58 @@ def read_wav(path: Path) -> tuple[np.ndarray, int]:
     return audio, sr
 
 
+ENERGY_VERSION = 2
+
+
 def audio_energy(wav: Path, hop: float = 0.5) -> dict:
-    """RMS loudness per hop, normalised to 0..1 against the 95th percentile."""
+    """Per-hop audio features, each normalised to 0..1 (v = ENERGY_VERSION):
+
+    rms     loudness against the video's 95th percentile
+    bright  spectral centroid: raised, shouted or laughing voices and cheering are brighter than calm speech
+    flux    spectral change between neighbouring frames: bursts, laughter, crowd noise, fast delivery
+
+    `bright` and `flux` are what the hype score listens to beyond plain loudness (steps/features.py)."""
     audio, sr = read_wav(wav)
     n = max(1, int(sr * hop))
     frames = len(audio) // n
     if frames == 0:
-        return {"hop": hop, "rms": []}
-    rms = np.sqrt((audio[: frames * n].reshape(frames, n) ** 2).mean(axis=1))
+        return {"v": ENERGY_VERSION, "hop": hop, "rms": [], "bright": [], "flux": []}
+    hops = audio[: frames * n].reshape(frames, n)
+    rms = np.sqrt((hops ** 2).mean(axis=1))
     ref = float(np.percentile(rms, 95)) or 1.0
-    return {"hop": hop, "rms": [round(float(x), 4) for x in np.clip(rms / ref, 0, 1)]}
+    out = {"v": ENERGY_VERSION, "hop": hop, "rms": [round(float(x), 4) for x in np.clip(rms / ref, 0, 1)]}
+
+    win = 1024
+    k = n // win  # spectrum frames per hop
+    if k < 1:
+        return {**out, "bright": [], "flux": []}
+    window = np.hanning(win).astype(np.float32)
+    freqs = np.fft.rfftfreq(win, 1.0 / sr).astype(np.float32)
+    centroid = np.zeros(frames, dtype=np.float32)
+    flux = np.zeros(frames, dtype=np.float32)
+    step = 1500  # hops per chunk: bounds memory on long videos
+    for h0 in range(0, frames, step):
+        chunk = hops[h0 : h0 + step, : k * win].reshape(-1, k, win) * window
+        spec = np.abs(np.fft.rfft(chunk, axis=2)).astype(np.float32)           # (hops, k, bins)
+        power = spec.sum(axis=2) + 1e-9
+        cen = (spec * freqs).sum(axis=2) / power                                # Hz per frame
+        centroid[h0 : h0 + len(chunk)] = (cen * power).sum(axis=1) / power.sum(axis=1)
+        logm = np.log1p(spec.reshape(-1, spec.shape[2]) * 50.0)
+        d = np.maximum(0.0, np.diff(logm, axis=0)).mean(axis=1)                 # rise in log-magnitude
+        d = np.concatenate([[0.0], d]).reshape(-1, k)
+        flux[h0 : h0 + len(chunk)] = d.mean(axis=1)
+    voiced = rms > 0.05 * ref
+    if voiced.any():
+        lo, hi = np.percentile(centroid[voiced], [10, 95])
+        bright = np.where(voiced, np.clip((centroid - lo) / max(1e-6, hi - lo), 0, 1), 0.0)
+        fref = float(np.percentile(flux[voiced], 95)) or 1.0
+        fl = np.where(voiced, np.clip(flux / fref, 0, 1), 0.0)
+    else:
+        bright = np.zeros(frames)
+        fl = np.zeros(frames)
+    out["bright"] = [round(float(x), 3) for x in bright]
+    out["flux"] = [round(float(x), 3) for x in fl]
+    return out
 
 
 def extract_frame(src: Path, t: float, dst: Path, width: int = 540) -> None:
