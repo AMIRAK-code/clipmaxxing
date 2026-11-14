@@ -14,14 +14,17 @@ import { encryptionKey } from "./social/config";
 
 type Env = Record<string, string | undefined>;
 
-export const AI_PROVIDERS = ["auto", "anthropic", "openai", "ollama", "none"] as const;
+export const AI_PROVIDERS = ["auto", "anthropic", "gemini", "openai", "custom", "ollama", "none"] as const;
 export type AiProvider = (typeof AI_PROVIDERS)[number];
 
 interface AiFile {
   provider?: AiProvider;
   smartEdit?: boolean;
   anthropic?: { keyEnc?: string; model?: string };
+  gemini?: { keyEnc?: string; model?: string };
   openai?: { keyEnc?: string; baseUrl?: string; model?: string };
+  /** a second, freely configurable OpenAI-compatible API (OpenRouter, Groq, DeepSeek, Mistral, xAI, a local server ...) */
+  custom?: { keyEnc?: string; baseUrl?: string; model?: string };
   ollama?: { url?: string; model?: string };
   elevenlabs?: { keyEnc?: string };
 }
@@ -29,6 +32,8 @@ interface AiFile {
 export const DEFAULTS = {
   anthropicModel: "claude-opus-5-5",
   openaiBaseUrl: "https://api.openai.com/v1",
+  /** Google's OpenAI-compatible endpoint for Gemini */
+  geminiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
   ollamaUrl: "http://127.0.0.1:11434",
 };
 
@@ -65,8 +70,10 @@ export interface AiSettingsView {
   provider: AiProvider;
   smartEdit: boolean;
   /** which engine scores clips right now */
-  active: "anthropic" | "openai" | "ollama" | "smart";
+  active: "anthropic" | "gemini" | "openai" | "custom" | "ollama" | "smart";
   anthropic: { keySet: boolean; keyFromEnv: boolean; model: string };
+  gemini: { keySet: boolean; keyFromEnv: boolean; model: string };
+  custom: { keySet: boolean; keyFromEnv: boolean; baseUrl: string; model: string };
   openai: { keySet: boolean; keyFromEnv: boolean; baseUrl: string; model: string };
   ollama: { url: string; model: string };
   elevenlabs: { keySet: boolean; keyFromEnv: boolean };
@@ -87,6 +94,11 @@ export function resolveAi(env: Env = process.env, opts: { dir?: string; key?: st
     smartEdit: smartEnv ? !["0", "false", "no", "off"].includes(smartEnv) : f.smartEdit !== false,
     anthropicKey: e("ANTHROPIC_API_KEY") || unseal(f.anthropic?.keyEnc, opts.key),
     anthropicModel: e("ANTHROPIC_MODEL") || f.anthropic?.model?.trim() || DEFAULTS.anthropicModel,
+    geminiKey: e("GEMINI_API_KEY") || unseal(f.gemini?.keyEnc, opts.key),
+    geminiModel: (e("GEMINI_MODEL") || f.gemini?.model?.trim() || "").replace(/^models\//, ""),
+    customKey: e("CUSTOM_AI_API_KEY") || unseal(f.custom?.keyEnc, opts.key),
+    customBaseUrl: (e("CUSTOM_AI_BASE_URL") || f.custom?.baseUrl?.trim() || "").replace(/\/+$/, ""),
+    customModel: e("CUSTOM_AI_MODEL") || f.custom?.model?.trim() || "",
     openaiKey: e("OPENAI_API_KEY") || unseal(f.openai?.keyEnc, opts.key),
     openaiBaseUrl: (e("OPENAI_BASE_URL") || f.openai?.baseUrl?.trim() || DEFAULTS.openaiBaseUrl).replace(/\/+$/, ""),
     openaiModel: e("OPENAI_MODEL") || f.openai?.model?.trim() || "",
@@ -100,7 +112,9 @@ export function resolveAi(env: Env = process.env, opts: { dir?: string; key?: st
 export function activeEngine(r: ReturnType<typeof resolveAi>): AiSettingsView["active"] {
   const p = r.provider;
   if ((p === "anthropic" || p === "auto") && r.anthropicKey) return "anthropic";
+  if ((p === "gemini" || p === "auto") && r.geminiKey && r.geminiModel) return "gemini";
   if ((p === "openai" || p === "auto") && r.openaiModel && (r.openaiKey || p === "openai" || !r.openaiBaseUrl.includes("api.openai.com"))) return "openai";
+  if ((p === "custom" || p === "auto") && r.customBaseUrl && r.customModel) return "custom";
   if ((p === "ollama" || p === "auto") && r.ollamaModel) return "ollama";
   return "smart";
 }
@@ -108,12 +122,17 @@ export function activeEngine(r: ReturnType<typeof resolveAi>): AiSettingsView["a
 export function aiSettingsView(env: Env = process.env, opts: { dir?: string; key?: string } = {}): AiSettingsView {
   const r = resolveAi(env, opts);
   const set = (n: string): boolean => Boolean(env[n]?.trim());
-  const locks = ["LLM_PROVIDER", "KLIPZ_SMART_EDIT", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "OLLAMA_URL", "OLLAMA_MODEL", "ELEVENLABS_API_KEY"];
+  const locks = [
+    "LLM_PROVIDER", "KLIPZ_SMART_EDIT", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "GEMINI_API_KEY", "GEMINI_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+    "OPENAI_MODEL", "CUSTOM_AI_API_KEY", "CUSTOM_AI_BASE_URL", "CUSTOM_AI_MODEL", "OLLAMA_URL", "OLLAMA_MODEL", "ELEVENLABS_API_KEY",
+  ];
   return {
     provider: r.provider,
     smartEdit: r.smartEdit,
     active: activeEngine(r),
     anthropic: { keySet: Boolean(r.anthropicKey), keyFromEnv: set("ANTHROPIC_API_KEY"), model: r.anthropicModel },
+    gemini: { keySet: Boolean(r.geminiKey), keyFromEnv: set("GEMINI_API_KEY"), model: r.geminiModel },
+    custom: { keySet: Boolean(r.customKey), keyFromEnv: set("CUSTOM_AI_API_KEY"), baseUrl: r.customBaseUrl, model: r.customModel },
     openai: { keySet: Boolean(r.openaiKey), keyFromEnv: set("OPENAI_API_KEY"), baseUrl: r.openaiBaseUrl, model: r.openaiModel },
     ollama: { url: r.ollamaUrl, model: r.ollamaModel },
     elevenlabs: { keySet: Boolean(r.elevenlabsKey), keyFromEnv: set("ELEVENLABS_API_KEY") },
@@ -126,7 +145,9 @@ export interface AiSettingsPatch {
   provider?: AiProvider;
   smartEdit?: boolean;
   anthropic?: { apiKey?: string | null; model?: string };
+  gemini?: { apiKey?: string | null; model?: string };
   openai?: { apiKey?: string | null; baseUrl?: string; model?: string };
+  custom?: { apiKey?: string | null; baseUrl?: string; model?: string };
   ollama?: { url?: string; model?: string };
   elevenlabs?: { apiKey?: string | null };
 }
@@ -144,6 +165,17 @@ export function saveAiSettings(patch: AiSettingsPatch, opts: { dir?: string; key
     f.anthropic ??= {};
     applyKey(f.anthropic, patch.anthropic.apiKey);
     if (patch.anthropic.model !== undefined) f.anthropic.model = patch.anthropic.model.trim();
+  }
+  if (patch.gemini) {
+    f.gemini ??= {};
+    applyKey(f.gemini, patch.gemini.apiKey);
+    if (patch.gemini.model !== undefined) f.gemini.model = patch.gemini.model.trim().replace(/^models\//, "");
+  }
+  if (patch.custom) {
+    f.custom ??= {};
+    applyKey(f.custom, patch.custom.apiKey);
+    if (patch.custom.baseUrl !== undefined) f.custom.baseUrl = patch.custom.baseUrl.trim();
+    if (patch.custom.model !== undefined) f.custom.model = patch.custom.model.trim();
   }
   if (patch.openai) {
     f.openai ??= {};
@@ -163,11 +195,36 @@ export function saveAiSettings(patch: AiSettingsPatch, opts: { dir?: string; key
   write(f, opts.dir);
 }
 
+/** An OpenAI-compatible chat endpoint to talk to, when the active engine is one (not Claude, not Smart Edit). */
+export interface ChatEngine {
+  kind: "gemini" | "openai" | "custom" | "ollama";
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export function chatEngine(env: Env = process.env, opts: { dir?: string; key?: string } = {}): ChatEngine | null {
+  const r = resolveAi(env, opts);
+  switch (activeEngine(r)) {
+    case "gemini":
+      return { kind: "gemini", baseUrl: DEFAULTS.geminiBaseUrl, apiKey: r.geminiKey, model: r.geminiModel };
+    case "openai":
+      return { kind: "openai", baseUrl: r.openaiBaseUrl, apiKey: r.openaiKey, model: r.openaiModel };
+    case "custom":
+      return { kind: "custom", baseUrl: r.customBaseUrl, apiKey: r.customKey, model: r.customModel };
+    case "ollama":
+      return { kind: "ollama", baseUrl: `${r.ollamaUrl}/v1`, apiKey: "", model: r.ollamaModel };  // Ollama's OpenAI-compatible API
+    default:
+      return null;
+  }
+}
+
 /** process.env plus the saved Anthropic key/model, for code that reads ANTHROPIC_* (AI captions). */
 export function aiEnv(env: Env = process.env): Env {
   const r = resolveAi(env);
   const out: Env = { ...env };
-  if (!env.ANTHROPIC_API_KEY?.trim() && r.anthropicKey && r.provider !== "none") out.ANTHROPIC_API_KEY = r.anthropicKey;
+  // only when Claude is the engine in use: with Gemini / a custom API selected the captions go there instead
+  if (!env.ANTHROPIC_API_KEY?.trim() && r.anthropicKey && activeEngine(r) === "anthropic") out.ANTHROPIC_API_KEY = r.anthropicKey;
   if (!env.ANTHROPIC_MODEL?.trim()) out.ANTHROPIC_MODEL = r.anthropicModel;
   return out;
 }
@@ -178,6 +235,8 @@ export interface AiTestResult {
   ok: boolean;
   message: string;
   models?: string[];
+  /** a model worth pre-selecting when none is chosen yet */
+  suggested?: string;
 }
 
 async function getJson(url: string, headers: Record<string, string>, timeoutMs = 8000): Promise<{ status: number; body: unknown }> {
@@ -196,9 +255,43 @@ const ids = (body: unknown, listKey: string, idKey: string): string[] => {
   return Array.isArray(list) ? list.map((m) => String((m as Record<string, unknown>)[idKey] ?? "")).filter(Boolean).sort() : [];
 };
 
-export async function testAi(which: "anthropic" | "openai" | "ollama", env: Env = process.env): Promise<AiTestResult> {
+export type AiTestTarget = "anthropic" | "gemini" | "openai" | "custom" | "ollama";
+
+/** Pick a sensible default from a provider's model list: the newest general "flash" model, else the first. */
+export function suggestGeminiModel(models: string[]): string | undefined {
+  const usable = models.filter((m) => /^gemini-/.test(m) && !/(embedding|image|tts|live|audio|robotics|computer-use|aqa)/i.test(m));
+  const rank = (m: string): number => {
+    const v = /gemini-(\d+(?:\.\d+)?)/.exec(m);
+    return (v ? Number(v[1]) : 0) * 10 + (/flash/.test(m) ? 3 : 0) - (/lite/.test(m) ? 1 : 0) - (/preview|exp/.test(m) ? 2 : 0);
+  };
+  return [...usable].sort((a, b) => rank(b) - rank(a) || a.localeCompare(b))[0] ?? models[0];
+}
+
+export async function testAi(which: AiTestTarget, env: Env = process.env): Promise<AiTestResult> {
   const r = resolveAi(env);
   try {
+    if (which === "gemini") {
+      if (!r.geminiKey) return { ok: false, message: "No Gemini API key saved." };
+      const { status, body } = await getJson(`${DEFAULTS.geminiBaseUrl}/models`, { authorization: `Bearer ${r.geminiKey}` });
+      if (status === 400 || status === 401 || status === 403) return { ok: false, message: "Google rejected the API key." };
+      if (status !== 200) return { ok: false, message: `Gemini answered HTTP ${status}.` };
+      const models = ids(body, "data", "id").map((m) => m.replace(/^models\//, ""));
+      const known = !r.geminiModel || models.length === 0 || models.includes(r.geminiModel);
+      return {
+        ok: true,
+        message: !r.geminiModel ? `Key works: ${models.length} models available. Choose one and save.` : known ? "Key works." : `Key works, but the model "${r.geminiModel}" is not in your model list.`,
+        models,
+        ...(suggestGeminiModel(models) ? { suggested: suggestGeminiModel(models) } : {}),
+      };
+    }
+    if (which === "custom") {
+      if (!r.customBaseUrl) return { ok: false, message: "Enter the API's base URL first." };
+      const { status, body } = await getJson(`${r.customBaseUrl}/models`, r.customKey ? { authorization: `Bearer ${r.customKey}` } : {});
+      if (status === 401 || status === 403) return { ok: false, message: "The server rejected the API key." };
+      if (status !== 200) return { ok: false, message: `${r.customBaseUrl} answered HTTP ${status}.` };
+      const models = ids(body, "data", "id");
+      return { ok: true, message: `Connected: ${models.length} model${models.length === 1 ? "" : "s"} available.`, models };
+    }
     if (which === "anthropic") {
       if (!r.anthropicKey) return { ok: false, message: "No Anthropic API key saved." };
       const { status, body } = await getJson("https://api.anthropic.com/v1/models?limit=100", { "x-api-key": r.anthropicKey, "anthropic-version": "2023-06-01" });
@@ -219,7 +312,12 @@ export async function testAi(which: "anthropic" | "openai" | "ollama", env: Env 
     const models = ids(body, "models", "name");
     return { ok: true, message: models.length ? `Ollama is running with ${models.length} model${models.length === 1 ? "" : "s"}.` : "Ollama is running but has no models yet. Import a GGUF file below, or run `ollama pull <model>`.", models };
   } catch (e) {
-    const what = which === "ollama" ? `Ollama is not reachable at ${r.ollamaUrl}. Install it from ollama.com and make sure it is running.` : which === "openai" ? `Could not reach ${r.openaiBaseUrl}.` : "Could not reach api.anthropic.com.";
+    const what =
+      which === "ollama" ? `Ollama is not reachable at ${r.ollamaUrl}. Install it from ollama.com and make sure it is running.`
+      : which === "openai" ? `Could not reach ${r.openaiBaseUrl}.`
+      : which === "custom" ? `Could not reach ${r.customBaseUrl}.`
+      : which === "gemini" ? "Could not reach generativelanguage.googleapis.com."
+      : "Could not reach api.anthropic.com.";
     return { ok: false, message: `${what} (${e instanceof Error ? e.name : "error"})` };
   }
 }

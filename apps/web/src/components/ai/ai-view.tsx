@@ -11,15 +11,31 @@ import type { AiProvider, AiSettingsPatch, AiSettingsView, AiTestResult } from "
 const ENGINE_LABEL: Record<AiSettingsView["active"], string> = {
   smart: "Smart Edit engine (built in, no AI model)",
   anthropic: "Claude (Anthropic API)",
-  openai: "OpenAI-compatible API",
+  gemini: "Gemini (Google AI)",
+  openai: "OpenAI API",
+  custom: "Custom API",
   ollama: "Local model (Ollama)",
 };
+
+/** Ready-made addresses for the Custom API card. Any server that speaks the OpenAI chat API works. */
+const CUSTOM_PRESETS: { label: string; url: string }[] = [
+  { label: "OpenRouter (hundreds of models)", url: "https://openrouter.ai/api/v1" },
+  { label: "Groq", url: "https://api.groq.com/openai/v1" },
+  { label: "DeepSeek", url: "https://api.deepseek.com/v1" },
+  { label: "Mistral", url: "https://api.mistral.ai/v1" },
+  { label: "xAI (Grok)", url: "https://api.x.ai/v1" },
+  { label: "Together AI", url: "https://api.together.xyz/v1" },
+  { label: "LM Studio (this PC)", url: "http://127.0.0.1:1234/v1" },
+  { label: "llama.cpp server (this PC)", url: "http://127.0.0.1:8080/v1" },
+];
 
 const CHOICES: { id: AiProvider; title: string; text: string }[] = [
   { id: "auto", title: "Automatic", text: "Use an AI model if one is set up below, otherwise the built-in Smart Edit engine." },
   { id: "none", title: "Smart Edit only", text: "Never call an AI model. Everything stays on this PC, free and offline." },
-  { id: "anthropic", title: "Claude", text: "Anthropic API key. Also writes AI captions for posts." },
-  { id: "openai", title: "OpenAI-compatible", text: "OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server ..." },
+  { id: "anthropic", title: "Claude", text: "Anthropic API key." },
+  { id: "gemini", title: "Gemini", text: "Google AI Studio API key (has a free tier)." },
+  { id: "openai", title: "OpenAI", text: "OpenAI API key and model." },
+  { id: "custom", title: "Custom API", text: "Any other model: OpenRouter, Groq, DeepSeek, Mistral, xAI, LM Studio ..." },
   { id: "ollama", title: "Local model", text: "A model running on this PC through Ollama (or an imported GGUF file)." },
 ];
 
@@ -35,6 +51,11 @@ export function AiView() {
   // form fields (keys are write-only: empty means "keep what is saved")
   const [anthropicKey, setAnthropicKey] = useState("");
   const [anthropicModel, setAnthropicModel] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
+  const [geminiModel, setGeminiModel] = useState("");
+  const [customKey, setCustomKey] = useState("");
+  const [customBase, setCustomBase] = useState("");
+  const [customModel, setCustomModel] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiBase, setOpenaiBase] = useState("");
   const [openaiModel, setOpenaiModel] = useState("");
@@ -47,6 +68,9 @@ export function AiView() {
   const apply = useCallback((v: AiSettingsView) => {
     setS(v);
     setAnthropicModel(v.anthropic.model);
+    setGeminiModel(v.gemini.model);
+    setCustomBase(v.custom.baseUrl);
+    setCustomModel(v.custom.model);
     setOpenaiBase(v.openai.baseUrl);
     setOpenaiModel(v.openai.model);
     setOllamaUrl(v.ollama.url);
@@ -71,11 +95,13 @@ export function AiView() {
     }
   };
 
-  const test = async (which: "anthropic" | "openai" | "ollama") => {
+  const test = async (which: "anthropic" | "gemini" | "openai" | "custom" | "ollama") => {
     setTests((t) => ({ ...t, [which]: { busy: true } }));
     try {
       const result = await api<AiTestResult>("/api/ai-settings/test", { method: "POST", json: { which } });
       setTests((t) => ({ ...t, [which]: { busy: false, result } }));
+      // no model chosen yet: pre-select the one the server suggests (saved when the person presses Save)
+      if (which === "gemini" && result.ok && result.suggested) setGeminiModel((m) => m || result.suggested!);
     } catch (e) {
       setTests((t) => ({ ...t, [which]: { busy: false, result: { ok: false, message: e instanceof Error ? e.message : "Test failed" } } }));
     }
@@ -102,12 +128,14 @@ export function AiView() {
   const locked = (name: string) => s.envLocked.includes(name);
   const ollamaModels = tests.ollama?.result?.models ?? [];
   const openaiModels = tests.openai?.result?.models ?? [];
+  const geminiModels = tests.gemini?.result?.models ?? [];
+  const customModels = tests.custom?.result?.models ?? [];
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
       <header>
         <h1 className="text-2xl font-black tracking-tight">AI</h1>
-        <p className="text-sm text-muted">Choose what finds and edits your clips. Without any AI model, KLIPZ uses its own Smart Edit engine. API keys are encrypted on this PC and never shown again.</p>
+        <p className="text-sm text-muted">Choose what finds your clips and writes your captions. Without any AI model, KLIPZ uses its own engine (hook, hype and pacing analysis). API keys are encrypted on this PC and never shown again.</p>
       </header>
 
       <Card className="flex flex-wrap items-center gap-3 p-4" data-testid="ai-active">
@@ -166,7 +194,7 @@ export function AiView() {
             {s.smartEdit ? "Turn off" : "Turn on"}
           </Button>
         </div>
-        <p className="text-xs text-muted">Without an AI model, clips are found by the built-in scorer: hook strength of the opening line, whether the passage stands alone and ends cleanly, emotional intensity, audio energy and scene cuts. Applies to clips found from now on (use “Find clips” again to redo a video).</p>
+        <p className="text-xs text-muted">Without an AI model, clips are found by the built-in engine: hook strength of the opening line (questions, bold claims, numbers, curiosity gaps), whether the passage stands alone and pays off, and hype: how much louder, brighter, faster and more worked-up the delivery is than the rest of the video. An AI model replaces the reading of the words; the hype analysis of the audio is always used. Applies to clips found from now on (use “Find clips” again to redo a video).</p>
       </Card>
 
       <ProviderCard icon={<Bot className="h-4 w-4" aria-hidden />} title="Claude (Anthropic API)" status={s.anthropic.keySet ? (s.anthropic.keyFromEnv ? "Key from environment" : "Key saved") : "No key"} good={s.anthropic.keySet}>
@@ -189,7 +217,70 @@ export function AiView() {
         />
       </ProviderCard>
 
-      <ProviderCard icon={<PlugZap className="h-4 w-4" aria-hidden />} title="OpenAI-compatible API" status={s.openai.model ? `Model: ${s.openai.model}` : "No model chosen"} good={Boolean(s.openai.model)}>
+      <ProviderCard icon={<Sparkles className="h-4 w-4" aria-hidden />} title="Gemini (Google AI)" status={s.gemini.keySet ? (s.gemini.model ? `Model: ${s.gemini.model}` : "Key saved, choose a model") : "No key"} good={s.gemini.keySet && Boolean(s.gemini.model)}>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Field label="API key" id="gemini-key">
+            <Input id="gemini-key" type="password" autoComplete="off" spellCheck={false} placeholder={s.gemini.keySet ? "Saved. Type to replace" : "AIza..."} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} disabled={locked("GEMINI_API_KEY")} />
+          </Field>
+          <Field label="Model" id="gemini-model">
+            <Input id="gemini-model" list="gemini-models" spellCheck={false} placeholder="Save the key, then press Test to list models" value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)} disabled={locked("GEMINI_MODEL")} />
+            <datalist id="gemini-models">{geminiModels.map((m) => <option key={m} value={m} />)}</datalist>
+          </Field>
+        </div>
+        <p className="text-xs text-muted">
+          Get a key at <a className="text-accent-2 underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>. Save it, press Test (it lists the models your key can use and suggests one), then Save again.
+        </p>
+        <Actions
+          onSave={async () => {
+            if (await save("gemini", { gemini: { ...(geminiKey.trim() ? { apiKey: geminiKey } : {}), model: geminiModel } }, "Gemini settings saved.")) setGeminiKey("");
+          }}
+          saving={saving === "gemini"}
+          onTest={() => void test("gemini")}
+          test={tests.gemini}
+          testLabel="Test / list models"
+          onRemoveKey={s.gemini.keySet && !s.gemini.keyFromEnv ? () => void save("gemini", { gemini: { apiKey: null } }, "Gemini key removed.") : undefined}
+        />
+      </ProviderCard>
+
+      <ProviderCard icon={<PlugZap className="h-4 w-4" aria-hidden />} title="Custom API (any other AI model)" status={s.custom.model ? `Model: ${s.custom.model}` : "Not set up"} good={Boolean(s.custom.baseUrl && s.custom.model)}>
+        <Field label="Service" id="custom-preset">
+          <Select
+            id="custom-preset"
+            className="w-full"
+            value={CUSTOM_PRESETS.some((x) => x.url === customBase) ? customBase : ""}
+            onChange={(e) => e.target.value && setCustomBase(e.target.value)}
+            disabled={locked("CUSTOM_AI_BASE_URL")}
+          >
+            <option value="">Other (type the address below)</option>
+            {CUSTOM_PRESETS.map((x) => <option key={x.url} value={x.url}>{x.label}</option>)}
+          </Select>
+        </Field>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Field label="Base URL" id="custom-base">
+            <Input id="custom-base" spellCheck={false} placeholder="https://.../v1" value={customBase} onChange={(e) => setCustomBase(e.target.value)} disabled={locked("CUSTOM_AI_BASE_URL")} />
+          </Field>
+          <Field label="API key (blank for local servers)" id="custom-key">
+            <Input id="custom-key" type="password" autoComplete="off" spellCheck={false} placeholder={s.custom.keySet ? "Saved. Type to replace" : "API key"} value={customKey} onChange={(e) => setCustomKey(e.target.value)} disabled={locked("CUSTOM_AI_API_KEY")} />
+          </Field>
+          <Field label="Model" id="custom-model">
+            <Input id="custom-model" list="custom-models" spellCheck={false} placeholder="Press Test to list models" value={customModel} onChange={(e) => setCustomModel(e.target.value)} disabled={locked("CUSTOM_AI_MODEL")} />
+            <datalist id="custom-models">{customModels.map((m) => <option key={m} value={m} />)}</datalist>
+          </Field>
+        </div>
+        <p className="text-xs text-muted">Works with any service that offers an OpenAI-compatible chat API. Pick a service or type its address, save, press Test to list its models, choose one and save.</p>
+        <Actions
+          onSave={async () => {
+            if (await save("custom", { custom: { ...(customKey.trim() ? { apiKey: customKey } : {}), baseUrl: customBase, model: customModel } }, "Custom API settings saved.")) setCustomKey("");
+          }}
+          saving={saving === "custom"}
+          onTest={() => void test("custom")}
+          test={tests.custom}
+          testLabel="Test / list models"
+          onRemoveKey={s.custom.keySet && !s.custom.keyFromEnv ? () => void save("custom", { custom: { apiKey: null } }, "API key removed.") : undefined}
+        />
+      </ProviderCard>
+
+      <ProviderCard icon={<PlugZap className="h-4 w-4" aria-hidden />} title="OpenAI API" status={s.openai.model ? `Model: ${s.openai.model}` : "No model chosen"} good={Boolean(s.openai.model)}>
         <div className="grid gap-2 sm:grid-cols-3">
           <Field label="Base URL" id="openai-base">
             <Input id="openai-base" spellCheck={false} value={openaiBase} onChange={(e) => setOpenaiBase(e.target.value)} disabled={locked("OPENAI_BASE_URL")} />
@@ -202,7 +293,7 @@ export function AiView() {
             <datalist id="openai-models">{openaiModels.map((m) => <option key={m} value={m} />)}</datalist>
           </Field>
         </div>
-        <p className="text-xs text-muted">Examples: OpenRouter <code>https://openrouter.ai/api/v1</code>, Groq <code>https://api.groq.com/openai/v1</code>, LM Studio <code>http://127.0.0.1:1234/v1</code>. Save, then Test to list the server&apos;s models.</p>
+        <p className="text-xs text-muted">Save, then Test to list the models. For other services (OpenRouter, Groq, a local server ...) use the Custom API card above.</p>
         <Actions
           onSave={async () => {
             if (await save("openai", { openai: { ...(openaiKey.trim() ? { apiKey: openaiKey } : {}), baseUrl: openaiBase, model: openaiModel } }, "OpenAI-compatible settings saved.")) setOpenaiKey("");

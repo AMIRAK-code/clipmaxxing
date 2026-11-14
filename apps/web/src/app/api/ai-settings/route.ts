@@ -12,7 +12,9 @@ const patchSchema = z
     provider: z.enum(AI_PROVIDERS).optional(),
     smartEdit: z.boolean().optional(),
     anthropic: z.object({ apiKey: key, model: text(120) }).strict().optional(),
+    gemini: z.object({ apiKey: key, model: text(120) }).strict().optional(),
     openai: z.object({ apiKey: key, baseUrl: text(300), model: text(200) }).strict().optional(),
+    custom: z.object({ apiKey: key, baseUrl: text(300), model: text(200) }).strict().optional(),
     ollama: z.object({ url: text(300), model: text(200) }).strict().optional(),
     elevenlabs: z.object({ apiKey: key }).strict().optional(),
   })
@@ -23,7 +25,7 @@ export const GET = route(() => ok(aiSettingsView()));
 
 export const PUT = route(async (req) => {
   const patch = await body(req, patchSchema);
-  for (const url of [patch.openai?.baseUrl, patch.ollama?.url]) {
+  for (const url of [patch.openai?.baseUrl, patch.custom?.baseUrl, patch.ollama?.url]) {
     if (url && !/^https?:\/\/[^\s]+$/i.test(url)) return ok({ error: "URLs must start with http:// or https://" }, { status: 400 });
   }
   saveAiSettings(patch as Parameters<typeof saveAiSettings>[0]);

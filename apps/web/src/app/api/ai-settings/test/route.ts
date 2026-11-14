@@ -6,6 +6,6 @@ export const dynamic = "force-dynamic";
 
 /** Check a provider with the saved settings; returns {ok, message, models?}. */
 export const POST = route(async (req) => {
-  const { which } = await body(req, z.object({ which: z.enum(["anthropic", "openai", "ollama"]) }));
+  const { which } = await body(req, z.object({ which: z.enum(["anthropic", "gemini", "openai", "custom", "ollama"]) }));
   return ok(await testAi(which));
 });

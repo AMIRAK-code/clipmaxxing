@@ -136,10 +136,14 @@ def interpolate_keys(keys: Sequence[dict[str, Any]], t: float) -> tuple[float, f
     return a["cx"] + (b["cx"] - a["cx"]) * k, a["cy"] + (b["cy"] - a["cy"]) * k
 
 
-def window_around(src_w: float, src_h: float, aspect: float, cx: float, cy: float) -> Rect:
+MAX_FRAME_ZOOM = 4.0
+
+
+def window_around(src_w: float, src_h: float, aspect: float, cx: float, cy: float, zoom: float = 1.0) -> Rect:
     w, h = src_w, src_w / aspect
     if h > src_h:
         h, w = src_h, src_h * aspect
+    w, h = w / zoom, h / zoom
     x = min(max(cx * src_w - w / 2, 0), src_w - w)
     y = min(max(cy * src_h - h / 2, 0), src_h - h)
     return Rect(x, y, w, h)
@@ -163,7 +167,33 @@ def layout_at(track: Optional[dict[str, Any]], t: float, src_w: int, src_h: int,
         h = min(out_h, (out_w * src_h) / src_w)
         return FrameLayout("letterbox", (Pane(Rect(0, (out_h - h) / 2, out_w, h), Rect(0, 0, src_w, src_h)),), True)
     cx, cy = interpolate_keys(seg["keys"], t)
-    return FrameLayout("crop", (Pane(Rect(0, 0, out_w, out_h), window_around(src_w, src_h, out_aspect, cx, cy)),), False)
+    zoom = min(MAX_FRAME_ZOOM, max(1.0, float(seg.get("zoom") or 1.0)))
+    return FrameLayout("crop", (Pane(Rect(0, 0, out_w, out_h), window_around(src_w, src_h, out_aspect, cx, cy, zoom)),), False)
+
+
+def manual_crop_track(frame: dict[str, Any], src_w: int, src_h: int) -> dict[str, Any]:
+    """crop.ts manualCropTrack(): the frame set by hand in the editor as a one-segment track."""
+    def c01(v: Any) -> float:
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return 0.5
+        return min(1.0, max(0.0, x)) if x == x else 0.5
+
+    try:
+        zoom = float(frame.get("zoom") or 1.0)
+    except (TypeError, ValueError):
+        zoom = 1.0
+    layout = "letterbox" if frame.get("layout") == "letterbox" else "crop"
+    return {"version": 1, "srcW": src_w, "srcH": src_h, "segments": [{
+        "start": 0, "end": 9007199254740991, "layout": layout, "keys": [{"t": 0, "cx": c01(frame.get("cx")), "cy": c01(frame.get("cy"))}],
+        "zoom": min(MAX_FRAME_ZOOM, max(1.0, zoom if zoom == zoom else 1.0)),
+    }]}
+
+
+def effective_crop_track(edit: dict[str, Any], track: Optional[dict[str, Any]], src_w: int, src_h: int) -> Optional[dict[str, Any]]:
+    frame = edit.get("frame")
+    return manual_crop_track(frame, src_w, src_h) if isinstance(frame, dict) else track
 
 
 # ── captions ──────────────────────────────────────────────────────────────

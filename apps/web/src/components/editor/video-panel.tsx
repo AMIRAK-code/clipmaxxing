@@ -1,6 +1,6 @@
 "use client";
 
-import { LOOKS, pieceDuration, totalDuration, type LookId, type TransitionType } from "@klipz/shared";
+import { LOOKS, MAX_FRAME_ZOOM, pieceDuration, totalDuration, type LookId, type TransitionType } from "@klipz/shared";
 import { Diamond, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import * as ops from "@/lib/editor/ops";
@@ -9,6 +9,7 @@ import { NumberInput, Section, SelectInput, Slider } from "./controls";
 import { useEdit, useEditor, useEditorCtx } from "./editor-context";
 
 const TRANSITIONS: TransitionType[] = ["none", "fade", "slide", "zoom", "flash"];
+type FrameMode = "auto" | "crop" | "letterbox";
 
 export function VideoPanel() {
   const ctx = useEditorCtx();
@@ -22,6 +23,34 @@ export function VideoPanel() {
 
   return (
     <div>
+      <Section title="Framing">
+        <SelectInput<FrameMode>
+          label="Crop"
+          value={edit.frame ? edit.frame.layout : "auto"}
+          options={[
+            { value: "auto", label: "Automatic (the framing KLIPZ chose)" },
+            { value: "crop", label: "Manual: crop, zoom and position" },
+            { value: "letterbox", label: "Manual: whole picture, blurred bars" },
+          ]}
+          onChange={(v) => st.apply(v === "auto" ? ops.setFrame(null) : ops.patchFrame({ layout: v }))}
+        />
+        {edit.frame?.layout === "crop" ? (
+          <>
+            <Slider label="Zoom" value={edit.frame.zoom} min={1} max={MAX_FRAME_ZOOM} step={0.05} onChange={(v) => st.apply(ops.patchFrame({ zoom: v }), "frame-zoom")} format={(v) => `${v.toFixed(2)}×`} testId="frame-zoom" />
+            <Slider label="Left / right" value={edit.frame.cx} min={0} max={1} step={0.005} onChange={(v) => st.apply(ops.patchFrame({ cx: v }), "frame-cx")} format={(v) => `${Math.round(v * 100)}%`} testId="frame-cx" />
+            <Slider label="Up / down" value={edit.frame.cy} min={0} max={1} step={0.005} onChange={(v) => st.apply(ops.patchFrame({ cy: v }), "frame-cy")} format={(v) => `${Math.round(v * 100)}%`} testId="frame-cy" />
+            <Button size="sm" variant="secondary" onClick={() => st.apply(ops.patchFrame({ cx: 0.5, cy: 0.5, zoom: 1 }))}>
+              Centre and reset zoom
+            </Button>
+          </>
+        ) : null}
+        <p className="text-xs text-muted">
+          {edit.frame
+            ? "This crop is used for the whole clip instead of the automatic framing. Left / right and up / down move the window inside the picture; at zoom 1 a wide video can only move sideways."
+            : "Automatic uses the framing chosen when the clip was made (speaker tracking, centre or fit). Switch to manual to crop, zoom and position the video yourself."}
+        </p>
+      </Section>
+
       <Section title="Look">
         <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Look">
           {(Object.keys(LOOKS) as LookId[]).map((id) => (

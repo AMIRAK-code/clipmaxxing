@@ -1,6 +1,6 @@
 "use client";
 
-import type { Clip, Job, Project, Render, SourceVideo, Word } from "@klipz/shared";
+import type { Clip, Framing, Job, Project, Render, SourceVideo, Word } from "@klipz/shared";
 import { AlertTriangle, Scissors, Sparkles, WifiOff } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { JobList } from "@/components/job-list";
@@ -42,6 +42,8 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const [words, setWords] = useState<Word[]>([]);
+  const [renderCount, setRenderCount] = useState(10);
+  const [framingBusy, setFramingBusy] = useState(false);
 
   const refetch = useCallback(async () => {
     try {
@@ -105,11 +107,40 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
     setStarting(type);
     setError(null);
     try {
-      await api("/api/jobs", { method: "POST", json: { type, sourceVideoId: source.id } });
+      await api("/api/jobs", { method: "POST", json: { type, sourceVideoId: source.id, ...(type === "autoclip" ? { renderClips: renderCount } : {}) } });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start the job");
     } finally {
       setStarting(null);
+    }
+  }
+
+  /** How clips are made vertical. Clips that were already framed are re-framed in the background. */
+  async function setFraming(framing: Framing) {
+    if (!source || source.framing === framing) return;
+    const before = source;
+    setSource({ ...source, framing });
+    setFramingBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ source: SourceVideo; reframed: number }>(`/api/sources/${source.id}`, { method: "PATCH", json: { framing } });
+      setSource(r.source);
+      void refetch();
+    } catch (e) {
+      setSource(before);
+      setError(e instanceof Error ? e.message : "Could not change the framing");
+    } finally {
+      setFramingBusy(false);
+    }
+  }
+
+  async function exportClip(id: string) {
+    setError(null);
+    try {
+      await api(`/api/clips/${id}/renders`, { method: "POST", json: {} });
+      void refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start the export");
     }
   }
 
@@ -166,8 +197,65 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
             </div>
           </div>
           <p className="text-xs text-muted">
-            <strong className="font-semibold text-fg">AutoClip</strong> finds the moments, reframes them to 9:16, adds captions and renders the top clips in one go.
+            <strong className="font-semibold text-fg">Find clips</strong> lists the potential clips (more for a longer video, 15 to 60 seconds each).{" "}
+            <strong className="font-semibold text-fg">AutoClip</strong> also edits and renders the best{" "}
+            <select
+              aria-label="How many clips AutoClip renders"
+              value={renderCount}
+              onChange={(e) => setRenderCount(Number(e.target.value))}
+              className="h-6 rounded border border-line bg-bg px-1 text-xs text-fg"
+              data-testid="render-count"
+            >
+              {[3, 5, 10, 20, 50].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>{" "}
+            in one go; export any other clip with its Export button.
           </p>
+          {source ? (
+            <fieldset className="flex flex-col gap-2 rounded-lg border border-line bg-bg p-3" disabled={framingBusy} data-testid="framing">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">Vertical framing</legend>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-[var(--color-accent,#7c5cff)]"
+                  checked={source.framing === "speaker"}
+                  onChange={(e) => void setFraming(e.target.checked ? "speaker" : "center")}
+                  data-testid="framing-speaker"
+                />
+                <span>
+                  <span className="font-semibold">Keep the speaker centred</span>
+                  <span className="block text-xs text-muted">
+                    Follows the person who is talking when the video is cropped to 9:16. Turn it off for gameplay, screen recordings or anything where the action matters more than a face.
+                  </span>
+                </span>
+              </label>
+              {source.framing !== "speaker" ? (
+                <div role="radiogroup" aria-label="Framing without speaker tracking" className="grid gap-2 sm:grid-cols-2">
+                  {([
+                    ["center", "Fill the screen", "The middle of the picture, cropped to 9:16."],
+                    ["fit", "Show the whole picture", "Nothing is cut off; blurred bars above and below."],
+                  ] as const).map(([id, label, hint]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="radio"
+                      aria-checked={source.framing === id}
+                      onClick={() => void setFraming(id)}
+                      className={cn("cursor-pointer rounded-lg border p-2 text-left", source.framing === id ? "border-accent bg-accent/10" : "border-line hover:bg-panel-2")}
+                      data-testid={`framing-${id}`}
+                    >
+                      <span className="block text-xs font-bold">{label}</span>
+                      <span className="block text-[11px] text-muted">{hint}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <p className="text-[11px] text-muted">Applies to this video's clips; already framed clips are re-framed. Any single clip can be cropped and positioned by hand in the editor (Video → Framing).</p>
+            </fieldset>
+          ) : null}
           {error ? (
             <p role="alert" className="text-xs text-bad">
               {error}
@@ -224,7 +312,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
             <>
               {visible.length === 0 ? <p className="rounded-lg border border-dashed border-line p-4 text-center text-sm text-muted">No clips match this filter.</p> : null}
               {visible.map((c) => (
-                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} />
+                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} />
               ))}
               {discarded.length > 0 ? (
                 <div className="mt-2">
@@ -239,7 +327,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
                   {showDiscarded ? (
                     <div className="mt-2 flex flex-col gap-3">
                       {discarded.map((c) => (
-                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} />
+                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} />
                       ))}
                     </div>
                   ) : null}

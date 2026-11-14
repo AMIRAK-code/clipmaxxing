@@ -296,3 +296,30 @@ def test_requested_engine_precedence(settings):
 
     assert render_step.requested_engine({}, dataclasses.replace(settings, render_engine="studio")) == "studio"
     assert render_step.requested_engine({"engine": "fast"}, dataclasses.replace(settings, render_engine="studio")) == "fast"
+
+
+# ── manual framing (crop / zoom / position set in the editor) ──────────────
+def test_manual_frame_overrides_the_automatic_track():
+    auto = {"version": 1, "srcW": 1280, "srcH": 720, "segments": [{"start": 0, "end": 99, "layout": "letterbox", "keys": []}]}
+    assert m.effective_crop_track({}, auto, 1280, 720) is auto
+    assert m.effective_crop_track({"frame": None}, auto, 1280, 720) is auto
+    manual = m.effective_crop_track({"frame": {"layout": "crop", "cx": 0.25, "cy": 0.5, "zoom": 2}}, auto, 1280, 720)
+    lay = m.layout_at(manual, 123.0, 1280, 720)
+    assert lay.layout == "crop" and lay.panes[0].src == m.Rect(0.25 * 1280 - 101.25, 180.0, 202.5, 360.0)
+    # values are clamped like cleanFrame() in crop.ts
+    wild = m.manual_crop_track({"layout": "zzz", "cx": -5, "cy": "x", "zoom": 99}, 1280, 720)["segments"][0]
+    assert (wild["layout"], wild["keys"][0]["cx"], wild["keys"][0]["cy"], wild["zoom"]) == ("crop", 0.0, 0.5, 4.0)
+    fit = m.layout_at(m.manual_crop_track({"layout": "letterbox", "cx": 0.5, "cy": 0.5, "zoom": 1}, 1280, 720), 0, 1280, 720)
+    assert fit.layout == "letterbox" and fit.blurred_background
+
+
+def test_manual_frame_is_used_by_the_fast_renderer(tmp_path: Path, sample_video: Path):
+    edit = {**smart_edit.build_edit(WORDS, 0.5, 5.0), "frame": {"layout": "crop", "cx": 0.8, "cy": 0.3, "zoom": 2.5}}
+    auto = {"version": 1, "srcW": 1280, "srcH": 720, "segments": [{"start": 0, "end": 12, "layout": "letterbox", "keys": []}]}
+    plan = graph.build_plan(props_for(edit, auto), "in.mp4", has_audio=True)
+    assert "gblur" not in plan.graph and "crop=162:288:" in plan.graph   # the manual window, not the letterbox
+    ff, fp = ffmpeg.binaries()
+    out = tmp_path / "manual.mp4"
+    fastrender.render(props_for(edit, auto), sample_video, out, tmp_path / "w", ffmpeg=ff, ffprobe=fp, has_audio=True)
+    probe = ffmpeg.probe(out)
+    assert (probe["width"], probe["height"]) == (1080, 1920)

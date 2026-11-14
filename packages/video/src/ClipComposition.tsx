@@ -3,6 +3,7 @@ import { AbsoluteFill, useRemotionEnvironment, useVideoConfig } from "remotion";
 import { Captions } from "./Captions";
 import { useCaptionFonts } from "./fonts";
 import { AudioLayer, BrollLayer, TextLayer } from "./Items";
+import { effectiveCropTrack } from "@klipz/shared";
 import { MainTrack } from "./MainTrack";
 import { HookCard, ProgressBar, SafeZoneOverlay } from "./Overlays";
 import type { ClipProps } from "./types";
@@ -16,7 +17,8 @@ export const ClipComposition: React.FC<ClipProps> = (props) => {
 
   return (
     <AbsoluteFill style={{ background: "#000", overflow: "hidden" }}>
-      <MainTrack edit={edit} sourceUrl={sourceUrl} srcW={srcW} srcH={srcH} cropTrack={cropTrack} />
+      {/* a frame set by hand in the editor replaces the automatic (face-tracking) crop track */}
+      <MainTrack edit={edit} sourceUrl={sourceUrl} srcW={srcW} srcH={srcH} cropTrack={effectiveCropTrack(edit, cropTrack, srcW, srcH)} />
       <BrollLayer items={edit.broll} assetBaseUrl={assetBaseUrl} />
       <AudioLayer items={edit.audio} assetBaseUrl={assetBaseUrl} />
       <HookCard edit={edit} />

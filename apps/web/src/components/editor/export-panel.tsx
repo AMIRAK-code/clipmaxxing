@@ -25,6 +25,7 @@ export function ExportPanel({ initialRenders, initialJobs }: { initialRenders: R
   const saveState = useSaveState();
   const [renders, setRenders] = useState(initialRenders);
   const [denoise, setDenoise] = useState(false);
+  const [studio, setStudio] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,7 +48,7 @@ export function ExportPanel({ initialRenders, initialJobs }: { initialRenders: R
     try {
       const saved = await ctx.saveNow();
       if (!saved) throw new Error("Could not save your latest edits. Fix that, then export again.");
-      await api(`/api/clips/${ctx.clip.id}/renders`, { method: "POST", json: { denoise } });
+      await api(`/api/clips/${ctx.clip.id}/renders`, { method: "POST", json: { denoise, engine: studio ? "studio" : "auto" } });
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Export failed");
@@ -68,6 +69,14 @@ export function ExportPanel({ initialRenders, initialJobs }: { initialRenders: R
         <Row label="Denoise audio">
           <Switch checked={denoise} onChange={setDenoise} label="Denoise audio" />
         </Row>
+        <Row label="Studio renderer">
+          <Switch checked={studio} onChange={setStudio} label="Use the Studio (Chrome) renderer" />
+        </Row>
+        <p className="text-xs text-muted">
+          {studio
+            ? "Studio draws every frame in a browser: about ten times slower, needed only if the fast result looks wrong."
+            : "Exports use the fast renderer (FFmpeg). Edits with b-roll, added audio, text overlays, transitions, looks or emoji captions switch to the Studio renderer by themselves."}
+        </p>
         <Button onClick={() => void start()} disabled={busy} data-testid="export-start">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
           {inFlight ? "Rendering…" : "Export clip"}
@@ -132,6 +141,12 @@ function RenderCard({ clipId, render, job, outdated, onRetry }: { clipId: string
         </span>
       }
     >
+      {render.status === "ready" && render.options.rendered_by ? (
+        <p className="text-xs text-muted" data-testid="rendered-by">
+          Rendered with the {render.options.rendered_by === "fast" ? "fast renderer (FFmpeg)" : "Studio renderer (Chrome)"}
+          {render.options.fast_skipped ? `: ${render.options.fast_skipped}.` : "."}
+        </p>
+      ) : null}
       {render.status === "queued" || render.status === "rendering" ? (
         <div className="flex flex-col gap-2" data-testid="render-progress">
           <Progress value={job?.progress ?? 0} />

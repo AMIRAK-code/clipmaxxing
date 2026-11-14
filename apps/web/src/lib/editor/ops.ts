@@ -1,5 +1,6 @@
 import {
   CAPTION_PRESETS,
+  cleanFrame,
   editWordText,
   pieceDuration,
   pieceOffsets,
@@ -15,6 +16,7 @@ import {
   type CaptionStyle,
   type EditState,
   type LookId,
+  type ManualFrame,
   type Provider,
   type TextItem,
   type TransitionType,
@@ -204,6 +206,14 @@ export const setProgressBar = (patch: Partial<EditState["progressBar"]>): Recipe
 };
 export const setSafeZone = (zone: Provider | "none"): Recipe => (d) => {
   d.safeZone = zone;
+};
+/** Manual framing: undefined / null goes back to the automatic (face-tracking) crop. */
+export const setFrame = (frame: ManualFrame | null): Recipe => (d) => {
+  if (frame) d.frame = cleanFrame(frame);
+  else delete d.frame;
+};
+export const patchFrame = (patch: Partial<ManualFrame>): Recipe => (d) => {
+  d.frame = cleanFrame({ layout: "crop", cx: 0.5, cy: 0.5, zoom: 1, ...(d.frame ?? {}), ...patch });
 };
 export const setVolume = (v: number): Recipe => (d) => {
   d.volume = clampNum(v, 0, 2);

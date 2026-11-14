@@ -211,7 +211,7 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
     edit = props["edit"]
     pieces: list[dict[str, Any]] = edit["video"]
     src_w, src_h = int(props["srcW"]), int(props["srcH"])
-    track = props.get("cropTrack")
+    track = m.effective_crop_track(edit, props.get("cropTrack"), src_w, src_h)
     frames = m.piece_frames(pieces)
     total = sum(n for _f0, n in frames)
 
