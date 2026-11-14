@@ -85,6 +85,14 @@ internal static class PythonEnv
         await RunAsync(paths.VenvPython, ["-m", "pip", "install", "--upgrade", "pip"], paths.WorkerDir, log);
         var pip = await RunAsync(paths.VenvPython, ["-m", "pip", "install", "--disable-pip-version-check", "-r", paths.Requirements], paths.WorkerDir, log);
         if (pip != 0) throw new InvalidOperationException($"Installing the Python packages failed (pip exit {pip}). Check your internet connection and try again.");
+        // ffmpeg comes as a separate download the first time it is used. Fetch it here, where the person
+        // sees it, instead of silently inside their first import. Not fatal: the worker fetches it itself
+        // if this did not work.
+        log("Getting ffmpeg (one time, about 80 MB) ...");
+        var ff = await RunAsync(paths.VenvPython,
+            ["-c", "from static_ffmpeg import run; print('ffmpeg ready:', run.get_or_fetch_platform_executables_else_raise()[0])"],
+            paths.WorkerDir, log);
+        if (ff != 0) log("ffmpeg could not be fetched now; KLIPZ will try again when it first needs it.");
         File.WriteAllText(Path.Combine(paths.VenvDir, MarkerName), RequirementsHash(paths));
         log("Python environment ready.");
     }
