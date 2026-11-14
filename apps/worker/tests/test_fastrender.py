@@ -323,3 +323,21 @@ def test_manual_frame_is_used_by_the_fast_renderer(tmp_path: Path, sample_video:
     fastrender.render(props_for(edit, auto), sample_video, out, tmp_path / "w", ffmpeg=ff, ffprobe=fp, has_audio=True)
     probe = ffmpeg.probe(out)
     assert (probe["width"], probe["height"]) == (1080, 1920)
+
+
+def test_hook_dim_is_drawn_by_the_filter_graph():
+    edit = edit_for()
+    total = m.duration_in_frames(edit["video"])
+    dim = ass.hook_dim(edit, total)
+    assert dim[0] == (0, 0.0) and dim[-1][1] == 0.0 and max(a for _n, a in dim) == pytest.approx(ass.HOOK_DIM.a, abs=1e-3)
+    assert [n for n, _a in dim] == sorted({n for n, _a in dim})
+    plan = graph.build_plan(props_for(edit), "in.mp4", has_audio=True, ass_file="captions.ass", dim=dim)
+    assert "lutyuv@dim=" in plan.graph and f"enable='lt(n,{dim[-1][0]})'" in plan.graph and "dim.cmd" in plan.files
+    assert plan.graph.index("lutyuv@dim") < plan.graph.index("subtitles=")       # under the card and the captions
+    assert "16+(val-16)*0.62" in plan.files["dim.cmd"]                           # full dim: 38 % of the way to black
+    # the ASS script then leaves the full-frame rectangle out
+    with_dim = ass.build_ass(edit, [], total).count("Dialogue:")
+    without = ass.build_ass(edit, [], total, draw_dim=False).count("Dialogue:")
+    assert without < with_dim
+    assert ass.hook_dim({**edit, "hook": {**edit["hook"], "enabled": False}}, total) == []
+    assert "lutyuv" not in graph.build_plan(props_for(edit), "in.mp4", has_audio=True).graph

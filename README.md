@@ -44,7 +44,7 @@ The shell's source is in `apps/desktop` (C#); the installer script is `installer
 - Python 3.11 (3.11.0 was used).
 - About 6 GB of free disk for dependencies and models, plus space for your videos and renders.
 - An NVIDIA GPU is optional. It only speeds up transcription (CUDA). Without it, transcription runs on the CPU (slower). Reference machine: RTX 3060 6 GB.
-- Renders are CPU/GPU-heavy: expect roughly 2 to 4 minutes per clip on the reference machine.
+- Renders with the fast renderer take roughly as long as the clip itself or less; the Studio (Chrome) renderer needs 1 to 4 minutes per clip.
 
 ### OneDrive warning
 
@@ -165,7 +165,14 @@ Keyboard shortcuts (press `?` in the editor to show them; they do not fire while
 
 ### Export
 
-Editor, **Export** tab: renders a **1080x1920 MP4** (H.264 + AAC, faststart, loudness normalised to about -14 LUFS), with an optional **Denoise audio** switch, and a cover image. The panel shows per-platform checks (duration and size limits) and the render status; earlier renders are listed. If you edit after rendering, the render is marked outdated and you export again. Render failures from Remotion that look transient ("No frame found at position", compositor errors) are retried automatically.
+Editor, **Export** tab (or the **Export** button on any clip card): renders a **1080x1920 MP4** (H.264 + AAC, faststart, loudness normalised to about -14 LUFS), with an optional **Denoise audio** switch, and a cover image.
+
+There are two renderers and KLIPZ picks one per export:
+
+- **Fast (FFmpeg)**, the default: one FFmpeg run draws the cuts, the reframing (crop, split, blurred letterbox, manual crop), zooms, word captions in the built-in styles, the hook card and the progress bar. On a laptop CPU a 20 second clip takes roughly 10 to 15 seconds.
+- **Studio (Chrome / Remotion)**: a headless browser draws every frame, about ten times slower. It is used by itself when an edit has something the fast renderer does not draw (b-roll, added audio or voiceover, text overlays, piece transitions, looks, emoji captions, a custom caption style with a gradient or an unbundled font, HDR video), and whenever the fast renderer fails. The **Studio renderer** switch forces it. Each render says which one produced it and, if the fast one was skipped, why.
+
+The two are built from the same layout maths and look the same; the fast one is slightly crisper on upscaled crops. The panel shows per-platform checks (duration and size limits) and the render status; earlier renders are listed. If you edit after rendering, the render is marked outdated and you export again. Render failures from Remotion that look transient ("No frame found at position", compositor errors) are retried automatically.
 
 ### Composer (posting)
 
@@ -193,11 +200,25 @@ Views, likes, comments and shares for published posts over 7/30/90 days: totals,
 - **Error log**: recent server errors.
 - **Danger zone**: disconnect all accounts, and **Delete all data** (empties the database tables and everything in `storage`, drops stored tokens; keeps the database file, schema and secret keys; cannot be undone; posts already published stay on the platforms).
 
+### Finding clips
+
+- **How many**: the number of potential clips follows the video's length (about one per 20 seconds, between 10 and 50; a short video simply has room for fewer). **Find clips** lists them. **AutoClip** also renders the best ones (10 by default, choose 3 to 50 next to the button); every other clip keeps an **Export** button.
+- **How long**: 15 seconds minimum. The maximum is a quarter of the video, between 20 and 60 seconds: a 2 minute video gives clips up to 30 s, 4 minutes and more up to a minute. Smart Edit's cuts never take a clip under 15 seconds.
+- **What scores well**: the opening line (questions, bold claims, numbers, curiosity gaps such as "here's why", "nobody tells you"; greetings and slow wind-ups score low), whether the passage stands alone and pays off, and **hype**: how much louder, burstier, brighter-sounding and faster the delivery is than the rest of the same video, plus laughter, exclamations and intense words. The hook and intensity cues cover English, Italian, Spanish, French, German and Portuguese; the audio part works for any language and for videos without speech.
+- **Hook text**: the on-screen hook is the clip's most gripping early sentence, trimmed to 60 characters using only the speaker's own words (with an AI model selected, the model writes it).
+
+### Vertical framing
+
+On the project page, **Keep the speaker centred** (on by default) follows the person who is talking when the video is cropped to 9:16. Turn it off for gameplay, screen recordings or anything where a face is not the point, and choose **Fill the screen** (the middle of the picture) or **Show the whole picture** (nothing cut off, blurred bars). It applies to all clips of that video; clips that were already framed are re-framed.
+
+For a single clip, the editor's **Video → Framing** section switches to a manual crop: zoom from 1x to 4x and move the window left / right and up / down, or show the whole picture. A manual crop replaces the automatic framing for that clip in the preview and in both renderers.
+
 ### AI tab and Smart Edit
 
 The **AI** page chooses what finds and edits clips, without touching any file:
 
-- **Engine**: Automatic, Smart Edit only (never calls a model), Claude (Anthropic API key), OpenAI-compatible (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server: base URL + optional key + model), or a Local model through Ollama. Each has a **Test** button; the Ollama one lists the installed models.
+- **Engine**: Automatic, Smart Edit only (never calls a model), Claude (Anthropic), Gemini (Google AI Studio key), OpenAI, a **Custom API** (any service with an OpenAI-compatible chat API: OpenRouter, Groq, DeepSeek, Mistral, xAI, Together, LM Studio, llama.cpp server; pick it from the list or type its address), or a Local model through Ollama. Each has a **Test** button that also lists the models the key can use; for Gemini it suggests one.
+- The selected engine rates the clips and writes the AI captions in the composer. The audio hype analysis is always done by KLIPZ itself. On long videos an AI model rates the 96 most promising moments; the rest keep the built-in rating.
 - **Import a model file**: give the full path of a `.gguf` file on this PC and a name; KLIPZ registers it with Ollama (`ollama create`) and selects it. Ollama must be installed and running.
 - Keys are stored encrypted in `<data dir>i-settings.json` and are never shown again. Environment variables / `.env.local` win over the page and are shown as locked. Changes apply to the next job, no restart.
 
@@ -240,9 +261,12 @@ Worker (root `.env.local`):
 | `KLIPZ_DATA_DIR` | `%USERPROFILE%\.klipz` | Data folder (also read by the web app and scripts; set it identically for both) |
 | `WHISPER_MODEL` | `small` | faster-whisper model name (`tiny`, `base`, `small`, `medium`, `large-v3`, ...). Bigger is slower and more accurate; `small` fits a 6 GB GPU |
 | `WHISPER_DEVICE` | `auto` | `auto`, `cuda` or `cpu`. CUDA failures fall back to CPU |
+| `WHISPER_THREADS` | two thirds of the logical CPUs, 4 to 8 | CPU threads for transcription (8 measured 1.8x faster than the library default of 4 on a 12-thread laptop) |
 | `TRANSCRIBER` | `auto` | `auto`, `whisperx` or `faster-whisper`. The WhisperX path needs `whisperx` installed (see `requirements-gpu.txt`) |
 | `HF_TOKEN` | empty | Hugging Face token, only for WhisperX diarization (speaker labels) |
-| `LLM_PROVIDER` | `auto` | Scorer: `auto` (Anthropic if a key is set, else an OpenAI-compatible API if a model is set, else Ollama if a model is set, else the built-in engine), `anthropic`, `openai`, `ollama`, `none` |
+| `LLM_PROVIDER` | `auto` | Scorer: `auto` (the first that is set up of Claude, Gemini, OpenAI, custom API, Ollama; else the built-in engine), `anthropic`, `gemini`, `openai`, `custom`, `ollama`, `none` |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | empty | Google Gemini through its OpenAI-compatible endpoint; both are needed |
+| `CUSTOM_AI_BASE_URL`, `CUSTOM_AI_API_KEY`, `CUSTOM_AI_MODEL` | empty | A second OpenAI-compatible API (OpenRouter, Groq, DeepSeek, a local server ...); URL and model are needed, the key is optional |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible chat API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server |
 | `OPENAI_API_KEY` | empty | Key for that API (leave empty for a local server) |
 | `OPENAI_MODEL` | empty | Model name; scoring through this API is off while empty |
@@ -253,7 +277,9 @@ Worker (root `.env.local`):
 | `OLLAMA_MODEL` | empty | Ollama model name (e.g. one you pulled); scoring via Ollama is off while empty |
 | `ELEVENLABS_API_KEY` | empty | Enables the optional text-to-speech voiceover step. Paid |
 | `SOURCE_RETENTION_DAYS` | `30` | Days to keep the source video/audio before cleanup |
-| `KLIPZ_RENDER_CONCURRENCY` | Remotion default | Browser tabs used per render; lower it if renders run out of memory |
+| `KLIPZ_RENDER_ENGINE` | `auto` | `auto` / `fast`: FFmpeg renderer when the edit allows it; `studio`: always the Chrome renderer |
+| `KLIPZ_FAST_PRESET` | `veryfast` | x264 preset of the fast renderer (`ultrafast` ... `slow`): slower presets give smaller files |
+| `KLIPZ_RENDER_CONCURRENCY` | Remotion default | Studio renderer only: browser tabs used per render; lower it if renders run out of memory |
 | `KLIPZ_MODEL_DOWNLOAD` | `1` | `0` stops the one-time face-model download (reframing then falls back) |
 | `KLIPZ_MODEL_DIR` | `<data dir>\models` | Where the face model is stored |
 | `KLIPZ_POLL_INTERVAL` | `1.0` | Seconds between job-queue polls |

@@ -205,7 +205,8 @@ def color_filters(matrix: str, full_range: bool) -> str:
 
 
 def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_file: Optional[str] = None,
-               fonts_dir: str = "fonts", matrix: str = "bt709", full_range: bool = False) -> Plan:
+               fonts_dir: str = "fonts", matrix: str = "bt709", full_range: bool = False,
+               dim: Sequence[tuple[int, float]] = ()) -> Plan:
     """`ass_file` / `fonts_dir` are paths relative to the directory ffmpeg runs in (no escaping needed).
     `matrix` / `full_range` say how the source's colours must be read."""
     edit = props["edit"]
@@ -290,6 +291,23 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
     zoom = b.zoom(edit.get("zooms") or [], total)
     if zoom:
         chain.append(zoom)
+    if len(dim) >= 2:
+        # The hook card's dim: black at opacity a over the frame = every pixel moved a of the way to black.
+        # On limited-range YUV that is a table lookup (luma towards 16, chroma towards 128), which costs
+        # next to nothing per frame. (drawbox would blend the chroma of yuv420p four times over, and a
+        # full-frame rectangle in libass cost more than all the captions of a clip.)
+        def lut(a: float) -> tuple[str, str]:
+            k = _f(1.0 - a)
+            return f"16+(val-16)*{k}", f"128+(val-128)*{k}"
+
+        last = dim[-1][0]
+        lines = []
+        for n, alpha in dim[1:-1]:
+            y, c = lut(alpha)
+            lines.append(f"{max(0.0, (n - 0.5) / FPS):.5f} lutyuv@dim y '{y}', lutyuv@dim u '{c}', lutyuv@dim v '{c}';")
+        b.files["dim.cmd"] = "\n".join(lines) + "\n"
+        y0, c0 = lut(dim[0][1])
+        chain.append(f"sendcmd=f=dim.cmd,lutyuv@dim=y='{y0}':u='{c0}':v='{c0}':enable='lt(n,{last})'")
     if ass_file:
         chain.append(f"subtitles=filename={ass_file}:fontsdir={fonts_dir}")
     if chain:

@@ -307,7 +307,28 @@ def hook_lines(text: str) -> list[str]:
     return lines
 
 
-def add_hook(script: Script, edit: dict[str, Any], total_frames: int) -> None:
+def hook_dim(edit: dict[str, Any], total_frames: int) -> list[tuple[int, float]]:
+    """The dim behind the hook card as (frame, opacity) change points; the last entry is where it ends.
+    Empty when there is no hook. libass can draw it too (add_hook(draw_dim=True)), but a full-frame
+    rectangle redrawn every frame cost more than all the captions of a clip together, so the filter graph
+    draws it with drawbox instead (graph.build_plan(dim=...))."""
+    hook = edit.get("hook") or {}
+    if not hook.get("enabled") or not str(hook.get("text") or "").strip():
+        return []
+    dur_f = m.js_round(float(hook.get("durationSec") or 0) * m.OUT_FPS)
+    last = min(dur_f, total_frames)
+    if last <= 0:
+        return []
+    out: list[tuple[int, float]] = []
+    for n in range(last):
+        a = round(HOOK_DIM.a * m.hook_envelope(n, dur_f), 3)
+        if not out or out[-1][1] != a:
+            out.append((n, a))
+    out.append((last, 0.0))
+    return out
+
+
+def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: bool = True) -> None:
     hook = edit.get("hook") or {}
     text = str(hook.get("text") or "")
     if not hook.get("enabled") or not text.strip():
@@ -339,7 +360,8 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int) -> None:
         if n == last or cur != prev:
             if prev is not None and prev[0] > 0.002:
                 env, k = prev
-                script.rect(0, start, n, cx, m.OUT_H / 2, m.OUT_W, m.OUT_H, 0, HOOK_DIM, env)
+                if draw_dim:
+                    script.rect(0, start, n, cx, m.OUT_H / 2, m.OUT_W, m.OUT_H, 0, HOOK_DIM, env)
                 script.rect(1, start, n, cx, cy + 10 * k, card_w * k, card_h * k, 32 * k, HOOK_SHADOW, env, blur=20 * k)
                 script.rect(2, start, n, cx, cy, card_w * k, card_h * k, 32 * k, HOOK_BG, env)
                 for i, line in enumerate(lines):
@@ -347,9 +369,10 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int) -> None:
             prev, start = cur, n
 
 
-def build_ass(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int) -> Optional[str]:
-    """The ASS script for this edit, or None when there is nothing to draw. Raises Unsupported."""
+def build_ass(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int, draw_dim: bool = True) -> Optional[str]:
+    """The ASS script for this edit, or None when there is nothing to draw. Raises Unsupported.
+    `draw_dim=False` leaves the hook's full-frame dim to the filter graph (see hook_dim)."""
     script = Script()
-    add_hook(script, edit, total_frames)
+    add_hook(script, edit, total_frames, draw_dim)
     add_captions(script, edit, custom_styles, total_frames)
     return script.render() if script.events else None

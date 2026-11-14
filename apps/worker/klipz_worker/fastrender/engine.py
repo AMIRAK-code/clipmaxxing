@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import model as m
-from .ass import Unsupported, build_ass
+from .ass import Unsupported, build_ass, hook_dim
 from .graph import FPS, build_plan
 from .text import font_files
 
@@ -142,7 +142,7 @@ def render(
     work.mkdir(parents=True, exist_ok=True)
 
     ass_name: Optional[str] = None
-    ass = build_ass(edit, props.get("customStyles") or [], total)
+    ass = build_ass(edit, props.get("customStyles") or [], total, draw_dim=False)
     if ass:
         ass_name = "captions.ass"
         (work / ass_name).write_text(ass, encoding="utf-8")
@@ -152,7 +152,8 @@ def render(
             shutil.copyfile(f, fonts / f.name)
 
     matrix, full_range = source_color(ffprobe, source_path)
-    plan = build_plan(props, str(source_path), has_audio=has_audio, ass_file=ass_name, matrix=matrix, full_range=full_range)
+    plan = build_plan(props, str(source_path), has_audio=has_audio, ass_file=ass_name, matrix=matrix, full_range=full_range,
+                      dim=hook_dim(edit, total))
     for name, content in plan.files.items():
         (work / name).write_text(content, encoding="utf-8")
     (work / "graph.txt").write_text(plan.graph, encoding="utf-8")

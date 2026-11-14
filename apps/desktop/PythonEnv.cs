@@ -81,7 +81,7 @@ internal static class PythonEnv
             var code = await RunAsync(python, ["-m", "venv", paths.VenvDir], null, log);
             if (code != 0 || !File.Exists(paths.VenvPython)) throw new InvalidOperationException($"Creating the Python environment failed (exit {code}).");
         }
-        log("Installing the video worker's Python packages (one time, a few minutes, ~2 GB download) ...");
+        log("Installing the video worker's Python packages (one time, a few minutes, about 500 MB to download) ...");
         await RunAsync(paths.VenvPython, ["-m", "pip", "install", "--upgrade", "pip"], paths.WorkerDir, log);
         var pip = await RunAsync(paths.VenvPython, ["-m", "pip", "install", "--disable-pip-version-check", "-r", paths.Requirements], paths.WorkerDir, log);
         if (pip != 0) throw new InvalidOperationException($"Installing the Python packages failed (pip exit {pip}). Check your internet connection and try again.");

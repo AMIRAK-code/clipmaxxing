@@ -66,6 +66,7 @@ internal sealed class Backend : IDisposable
             ["KLIPZ_PORT"] = Port.ToString(),
             ["KLIPZ_WORKER_PORT"] = WorkerPort.ToString(),
             ["KLIPZ_DATA_DIR"] = _paths.DataDir,
+            ["KLIPZ_VENV"] = _paths.VenvDir,   // the web app looks for the worker's ffmpeg in this venv
             ["KLIPZ_DESKTOP"] = "1",
             ["NODE_ENV"] = "production",
             ["NEXT_TELEMETRY_DISABLED"] = "1",
