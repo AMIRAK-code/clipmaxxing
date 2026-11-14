@@ -97,7 +97,7 @@ def test_candidates_on_sentence_boundaries_and_length():
     sents = segment.build_sentences(words)
     dur = words[-1]["e"] + 1
     cands = segment.generate_candidates(sents, dur)
-    assert 3 <= len(cands) <= segment.MAX_CANDIDATES
+    assert 3 <= len(cands) <= segment.pool_size(dur)  # the pool grows with the video
     starts = {round(s.s - segment.PAD_START, 3) for s in sents} | {0.0}
     ends = {round(s.e + segment.PAD_END, 3) for s in sents} | {round(dur, 3)}
     for c in cands:

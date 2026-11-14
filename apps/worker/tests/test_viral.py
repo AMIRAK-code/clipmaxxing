@@ -47,7 +47,7 @@ def test_targets_and_pool_grow_with_the_video():
     assert segment.targets_for(20) == (15.0, 20.0)
     assert segment.targets_for(37.5) == (15.0, 20.0, 30.0, 37.5)
     assert segment.targets_for(60) == (15.0, 20.0, 30.0, 45.0, 60.0)
-    assert segment.pool_size(60) == 60 and segment.pool_size(600) == 100 and segment.pool_size(7200) == 240
+    assert segment.pool_size(60) == 60 and segment.pool_size(600) == 300 and segment.pool_size(7200) == 600
 
 
 @pytest.mark.parametrize("n_sentences,cap", [(35, 30.0), (120, 60.0)])
@@ -298,3 +298,33 @@ def test_autoclip_renders_top_n_of_the_found_clips(db, settings, project, sample
     rendered = {r["clip_id"] for r in db.many("renders", "select * from renders")}
     assert rendered == set(ids[:2])
     assert len(db.many("clips", "select * from clips where source_video_id = ?", sid)) == 6  # the rest stay as candidates
+
+
+# ── transcription ──────────────────────────────────────────────────────────
+def test_elided_and_hyphenated_words_are_joined():
+    from klipz_worker.steps.transcribe import merge_split_words
+
+    words = [
+        {"w": "All", "s": 0.0, "e": 0.2, "p": 0.9}, {"w": "'inizio", "s": 0.2, "e": 0.6, "p": 0.8},
+        {"w": "l'", "s": 0.7, "e": 0.8}, {"w": "occupazione", "s": 0.8, "e": 1.4},
+        {"w": "anti", "s": 1.5, "e": 1.7}, {"w": "-incendio", "s": 1.7, "e": 2.2},
+        {"w": "don't", "s": 2.3, "e": 2.6}, {"w": "stop", "s": 2.65, "e": 2.9},
+        {"w": "-", "s": 3.0, "e": 3.1}, {"w": "'late", "s": 5.0, "e": 5.3},
+    ]
+    out = merge_split_words(words)
+    assert [w["w"] for w in out] == ["All'inizio", "l'occupazione", "anti-incendio", "don't", "stop", "-", "'late"]
+    assert (out[0]["s"], out[0]["e"], out[0]["p"]) == (0.0, 0.6, 0.8) and (out[1]["s"], out[1]["e"]) == (0.7, 1.4)
+    assert words[0]["w"] == "All"  # the input is not modified
+
+
+def test_whisper_threads(monkeypatch):
+    import os
+
+    from klipz_worker.steps import transcribe as tr
+
+    monkeypatch.delenv("WHISPER_THREADS", raising=False)
+    for cpus, want in ((2, 4), (8, 5), (12, 8), (32, 8)):
+        monkeypatch.setattr(os, "cpu_count", lambda c=cpus: c)
+        assert tr.whisper_threads() == want
+    monkeypatch.setenv("WHISPER_THREADS", "3")
+    assert tr.whisper_threads() == 3

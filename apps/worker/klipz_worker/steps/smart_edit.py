@@ -19,6 +19,8 @@ from . import heuristics as H
 
 # ── tuning ────────────────────────────────────────────────────────────────
 MAX_GAP = 0.45          # silence longer than this between two words is cut ...
+MIN_OUTPUT = 15.0       # ... but never so much that the finished clip drops under this (when it started above it)
+RELAXED_GAPS = (0.8, 1.2, 2.0)
 KEEP_PAD = 0.12         # ... keeping this much air on each side so speech is never clipped
 MIN_PIECE = 0.35        # never leave a sliver shorter than this
 FILLER_WORDS = {"um", "uh", "uhm", "umm", "er", "erm", "hmm", "mm", "ah"}
@@ -41,8 +43,9 @@ def _r(x: float) -> float:
     return round(x, 3)
 
 
-def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float) -> list[tuple[float, float]]:
-    """Source-time ranges to keep: the clip minus long silences and isolated filler words."""
+def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float, max_gap: float = MAX_GAP,
+                drop_fillers: bool = True) -> list[tuple[float, float]]:
+    """Source-time ranges to keep: the clip minus silences longer than `max_gap` and isolated filler words."""
     ws = [w for w in words if w["e"] > start and w["s"] < end]
     if not ws:
         return [(start, end)]
@@ -51,14 +54,14 @@ def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float) -> li
         if _norm(str(w["w"])) in FILLER_WORDS:
             before = w["s"] - (ws[i - 1]["e"] if i > 0 else start)
             after = (ws[i + 1]["s"] if i + 1 < len(ws) else end) - w["e"]
-            if before >= FILLER_MIN_GAP and after >= FILLER_MIN_GAP:
+            if drop_fillers and before >= FILLER_MIN_GAP and after >= FILLER_MIN_GAP:
                 continue  # drop it: the gap it leaves is closed below
         spoken.append((max(start, float(w["s"])), min(end, float(w["e"]))))
     if not spoken:
         return [(start, end)]
     ranges: list[list[float]] = []
     for s, e in spoken:
-        if ranges and s - ranges[-1][1] <= MAX_GAP:
+        if ranges and s - ranges[-1][1] <= max_gap:
             ranges[-1][1] = max(ranges[-1][1], e)
         else:
             ranges.append([s, e])
@@ -78,6 +81,23 @@ def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float) -> li
         else:
             merged.append((s, e))
     return merged or [(start, end)]
+
+
+def fitted_ranges(words: Sequence[dict[str, Any]], start: float, end: float, min_output: float = MIN_OUTPUT) -> list[tuple[float, float]]:
+    """keep_ranges(), cutting less (longer pauses allowed, then no cuts at all) whenever the usual cuts
+    would leave a clip shorter than `min_output`. A clip that is shorter than that to begin with is cut
+    normally: there is no minimum to protect."""
+    ranges = keep_ranges(words, start, end)
+    if end - start < min_output:
+        return ranges
+    kept = lambda rs: sum(e - s for s, e in rs)  # noqa: E731
+    if kept(ranges) >= min_output:
+        return ranges
+    for gap in RELAXED_GAPS:
+        ranges = keep_ranges(words, start, end, max_gap=gap, drop_fillers=False)
+        if kept(ranges) >= min_output:
+            return ranges
+    return [(start, end)]
 
 
 def _src_to_out(ranges: Sequence[tuple[float, float]], t: float) -> Optional[float]:
@@ -155,7 +175,7 @@ def build_edit(
     """A complete EditState (packages/shared/src/types.ts) for the clip [start, end] of the source."""
     start, end = float(start), float(end)
     ws = [w for w in words if w["e"] > start and w["s"] < end and str(w["w"]).strip()]
-    ranges = keep_ranges(ws, start, end)
+    ranges = fitted_ranges(ws, start, end)
     emph = _emphasis(ws, keywords)
 
     caption_words: list[dict[str, Any]] = []

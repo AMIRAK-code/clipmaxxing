@@ -15,6 +15,46 @@ log = logging.getLogger("klipz.transcribe")
 ProgressFn = Callable[[float], None]
 
 
+def whisper_threads() -> int:
+    """CPU threads for Whisper. The library's default is 4; on a 12-thread laptop CPU 8 measured 1.8x
+    faster (54 s -> 30 s for 93 s of speech) and 10 was slower again (efficiency cores, heat), so: two
+    thirds of the logical CPUs, between 4 and 8. WHISPER_THREADS overrides."""
+    import os
+
+    try:
+        forced = int(os.environ.get("WHISPER_THREADS", "") or 0)
+    except ValueError:
+        forced = 0
+    if forced > 0:
+        return forced
+    return min(8, max(4, (os.cpu_count() or 4) * 2 // 3))
+
+
+_JOIN_LEFT = ("'", "\u2019", "-")
+
+
+def merge_split_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Whisper times elided and hyphenated words in pieces: "l'" + "occupazione", "All" + "'inizio",
+    "anti" + "-incendio". Shown as separate caption words they read wrong, so join them back: a piece
+    that starts with an apostrophe / hyphen joins the word before it, and a word that ends with an
+    apostrophe takes the piece after it. Timings span both pieces."""
+    out: list[dict[str, Any]] = []
+    for w in words:
+        text = str(w["w"])
+        prev = out[-1] if out else None
+        joins = prev is not None and float(w["s"]) - float(prev["e"]) < 0.35 and (
+            (len(text) > 1 and text[0] in _JOIN_LEFT) or (str(prev["w"])[-1:] in ("'", "\u2019") and len(str(prev["w"])) <= 6)
+        )
+        if joins and prev is not None:
+            prev["w"] = f"{prev['w']}{text}"
+            prev["e"] = w["e"]
+            if "p" in prev and "p" in w:
+                prev["p"] = round(min(float(prev["p"]), float(w["p"])), 3)
+        else:
+            out.append(dict(w))
+    return out
+
+
 class Transcriber(Protocol):
     name: str
 
@@ -41,6 +81,8 @@ class FasterWhisperTranscriber:
     def _load(self, device: str, compute_type: str) -> Any:
         from faster_whisper import WhisperModel
 
+        if device == "cpu":
+            return WhisperModel(self.model_name, device=device, compute_type=compute_type, cpu_threads=whisper_threads())
         return WhisperModel(self.model_name, device=device, compute_type=compute_type)
 
     def _run(self, model: Any, audio: Any, duration: float, on_progress: ProgressFn) -> dict[str, Any]:
@@ -56,7 +98,7 @@ class FasterWhisperTranscriber:
                                   "p": round(float(w.probability), 3)})
             if duration > 0:
                 on_progress(min(1.0, float(s.end) / duration))
-        return {"language": getattr(info, "language", None), "words": words,
+        return {"language": getattr(info, "language", None), "words": merge_split_words(words),
                 "model": f"faster-whisper:{self.model_name}"}
 
     def transcribe(self, audio_path: Path, duration: float, on_progress: ProgressFn) -> dict[str, Any]:

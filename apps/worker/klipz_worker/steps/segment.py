@@ -13,7 +13,7 @@ MIN_LEN = 15.0
 MAX_LEN = 60.0
 TARGETS = (15.0, 20.0, 30.0, 45.0, 60.0)
 MAX_CANDIDATES = 60   # floor of the candidate pool; long videos get more (pool_size)
-MAX_POOL = 240
+MAX_POOL = 600
 PAUSE_BREAK = 0.8
 MAX_SENTENCE = 25.0
 PAD_START = 0.15
@@ -95,8 +95,10 @@ def targets_for(max_len: float) -> tuple[float, ...]:
 
 
 def pool_size(duration: float) -> int:
-    """How many candidate windows to score: about one per 6 s of video, between 60 and 240."""
-    return int(min(MAX_POOL, max(MAX_CANDIDATES, (duration or 0) / 6.0)))
+    """How many candidate windows to score: about one per 2 s of video, between 60 and 600. Most of them
+    overlap (several lengths per starting sentence), so a big pool is what lets a long video offer many
+    distinct clips. An AI scorer only rates the best LLM_POOL of them (steps/score.py)."""
+    return int(min(MAX_POOL, max(MAX_CANDIDATES, (duration or 0) / 2.0)))
 
 
 def _cheap_score(c: Candidate) -> float:

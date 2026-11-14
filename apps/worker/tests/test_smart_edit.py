@@ -162,3 +162,22 @@ def test_openai_compat_scorer_parses_reply():
     [r] = OpenAICompatScorer("http://x/v1/", "sk", "m", client=c).rate([cand])
     assert (r.hook, r.scorer, r.title) == (90.0, "openai", "T")
     assert c.calls[0] == ("http://x/v1/chat/completions", {"authorization": "Bearer sk"})
+
+
+def test_cuts_never_take_a_clip_under_the_15_s_minimum():
+    # 16.5 s of speech in short bursts with 0.6 s pauses: the usual cuts would leave about 11 s
+    words, t0 = [], 0.0
+    for i in range(11):
+        words += [W(f"a{i}", t0, t0 + 0.4), W(f"b{i}.", t0 + 0.45, t0 + 0.9)]
+        t0 += 1.5
+    start, end = 0.0, 16.5
+    assert sum(e - s for s, e in se.keep_ranges(words, start, end)) < 15
+    fitted = se.fitted_ranges(words, start, end)
+    assert sum(e - s for s, e in fitted) >= 15
+    edit = se.build_edit(words, start, end)
+    assert sum(p["srcEnd"] - p["srcStart"] for p in edit["video"]) >= 15
+    # a clip that is under the minimum anyway is still cut normally
+    assert len(se.fitted_ranges(WORDS, 9.5, 15.5)) == 2
+    # and one with room to spare keeps its jump cuts
+    long = [W(f"w{i}", i * 0.5, i * 0.5 + 0.3) for i in range(30)] + [W("end.", 40.0, 40.4)] + [W(f"x{i}", 41 + i * 0.5, 41.3 + i * 0.5) for i in range(30)]
+    assert len(se.fitted_ranges(long, 0.0, 57.0)) >= 2
