@@ -5,13 +5,18 @@ import {
   OUT_W,
   SAFE_ZONES,
   activeWordIndex,
+  baseDirection,
   captionWordsOnTimeline,
   clampToSafeZone,
+  fontStack,
+  hasCursiveScript,
   layoutLines,
+  layoutWordOrder,
   pageAt,
   paginate,
   resolveCaptionStyle,
   type CaptionStyle,
+  type Dir,
   type EditState,
   type TimedCaptionWord,
 } from "@klipz/shared";
@@ -39,10 +44,10 @@ export const Captions: React.FC<{ edit: EditState; customStyles?: CaptionStyle[]
     () => resolveCaptionStyle(edit.captions.styleId, edit.captions.overrides, customStyles ?? []),
     [edit.captions.styleId, edit.captions.overrides, customStyles],
   );
-  const pages = useMemo(
-    () => paginate(captionWordsOnTimeline(edit.video, edit.captions.words), style),
-    [edit.video, edit.captions.words, style],
-  );
+  const words = useMemo(() => captionWordsOnTimeline(edit.video, edit.captions.words), [edit.video, edit.captions.words]);
+  const pages = useMemo(() => paginate(words, style), [words, style]);
+  // one reading direction for the whole clip: Persian / Arabic captions run right to left
+  const base = useMemo(() => baseDirection(words.map((w) => w.w)), [words]);
   if (!edit.captions.enabled) return null;
 
   const t = frame / fps;
@@ -89,9 +94,10 @@ export const Captions: React.FC<{ edit: EditState; customStyles?: CaptionStyle[]
         ) : null}
         {lines.map((line, li) => (
           <div key={li} style={{ display: "flex", gap, justifyContent: "center", lineHeight: style.lineHeight }}>
-            {line.map((w) => (
-              <CaptionWordView key={w.id} word={w} index={page.words.indexOf(w)} active={active} style={style} />
-            ))}
+            {layoutWordOrder(line.map((w) => w.w), base).map(({ index, dir }) => {
+              const w = line[index]!;
+              return <CaptionWordView key={w.id} word={w} index={page.words.indexOf(w)} active={active} style={style} dir={dir} />;
+            })}
           </div>
         ))}
       </div>
@@ -99,11 +105,12 @@ export const Captions: React.FC<{ edit: EditState; customStyles?: CaptionStyle[]
   );
 };
 
-const CaptionWordView: React.FC<{ word: TimedCaptionWord; index: number; active: number; style: CaptionStyle }> = ({
+const CaptionWordView: React.FC<{ word: TimedCaptionWord; index: number; active: number; style: CaptionStyle; dir: Dir }> = ({
   word,
   index,
   active,
   style,
+  dir,
 }) => {
   const isActive = index === active;
   const spoken = index <= active;
@@ -140,10 +147,12 @@ const CaptionWordView: React.FC<{ word: TimedCaptionWord; index: number; active:
     <span
       style={{
         display: "inline-block",
-        fontFamily: `"${style.fontFamily}", sans-serif`,
+        fontFamily: fontStack(style.fontFamily),
         fontWeight: style.fontWeight,
         fontSize: style.fontSize,
-        letterSpacing: `${style.letterSpacing}em`,
+        // spacing would pull the joined letters of Arabic script apart
+        letterSpacing: hasCursiveScript(word.w) ? 0 : `${style.letterSpacing}em`,
+        direction: dir === "rtl" ? "rtl" : undefined,
         color,
         background,
         borderRadius: style.boxRadius,

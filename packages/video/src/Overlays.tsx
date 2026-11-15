@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
-import { OUT_H, OUT_W, SAFE_ZONES, clampToSafeZone, type EditState } from "@klipz/shared";
+import { OUT_H, OUT_W, SAFE_ZONES, baseDirection, clampToSafeZone, fontStack, type EditState } from "@klipz/shared";
 import { hookEnvelope, entrance } from "./anim";
 import { fitScale, measureText } from "./fit";
 import { maxCaptionWidth } from "./Captions";
@@ -41,7 +41,8 @@ export const HookCard: React.FC<{ edit: EditState }> = ({ edit }) => {
             transform: `translateY(-50%) scale(${scale * (0.85 + 0.15 * inAnim.scale)})`,
             opacity: env,
             textAlign: "center",
-            fontFamily: '"Montserrat", sans-serif',
+            direction: baseDirection([label]),
+            fontFamily: fontStack("Montserrat"),
             fontWeight: 900,
             fontSize,
             lineHeight: 1.1,

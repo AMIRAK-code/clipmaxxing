@@ -291,5 +291,10 @@
       }
     ]
   },
+  "fallbackFont": {
+    "family": "Vazirmatn",
+    "file": "vazirmatn-900.woff2",
+    "weight": 900
+  },
   "defaultStyleId": "bold-outline"
 }

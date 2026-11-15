@@ -1,5 +1,5 @@
-// Copies the latin woff2 files from @fontsource/* into apps/web/public/fonts
-// using the exact filenames listed in packages/shared/src/presets.ts FONT_FILES.
+// Copies the woff2 files from @fontsource/* into apps/web/public/fonts
+// using the exact filenames listed in packages/shared/src/presets.ts FONT_FILES / FALLBACK_FONT.
 // Run: node scripts/copy-fonts.mjs
 import fs from "node:fs";
 import path from "node:path";
@@ -8,9 +8,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "apps", "web", "public", "fonts");
 
-// output filename -> [@fontsource package, weight]. Keep in sync with FONT_FILES
-// (a unit test in packages/video asserts that they match).
+// output filename -> [@fontsource package, weight, subset (default "latin")]. Keep in sync with
+// FONT_FILES and FALLBACK_FONT (a unit test in packages/video asserts that they match).
 export const FONT_COPY = {
+  "vazirmatn-900.woff2": ["vazirmatn", 900, "arabic"],
   "montserrat-900.woff2": ["montserrat", 900],
   "poppins-800.woff2": ["poppins", 800],
   "inter-700.woff2": ["inter", 700],
@@ -23,8 +24,8 @@ export const FONT_COPY = {
 export function copyFonts() {
   fs.mkdirSync(outDir, { recursive: true });
   const copied = [];
-  for (const [name, [pkg, weight]] of Object.entries(FONT_COPY)) {
-    const src = path.join(root, "node_modules", "@fontsource", pkg, "files", `${pkg}-latin-${weight}-normal.woff2`);
+  for (const [name, [pkg, weight, subset = "latin"]] of Object.entries(FONT_COPY)) {
+    const src = path.join(root, "node_modules", "@fontsource", pkg, "files", `${pkg}-${subset}-${weight}-normal.woff2`);
     if (!fs.existsSync(src)) throw new Error(`Missing font source: ${src} (is @fontsource/${pkg} installed?)`);
     fs.copyFileSync(src, path.join(outDir, name));
     copied.push(name);

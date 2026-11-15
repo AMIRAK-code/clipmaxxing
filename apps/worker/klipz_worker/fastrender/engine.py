@@ -6,7 +6,8 @@
 It draws what the Remotion composition draws for the common case (cuts, crop / letterbox / split
 reframing, zoom keys, word captions in the built-in styles, hook card, progress bar). Edits that use
 anything else (b-roll, extra audio, text overlays, piece transitions, looks, emoji captions, fonts that
-are not bundled) are reported as unsupported and rendered by Remotion as before.
+are not bundled) are reported as unsupported and rendered by Remotion as before. Captions in Arabic script
+(Persian, Arabic, Urdu) are drawn with the bundled fallback font, right to left (see ass.py, bidi.py).
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import model as m
-from .ass import Unsupported, build_ass, hook_dim
+from .ass import Unsupported, build_ass, build_script, hook_dim
 from .graph import FPS, build_plan
 from .text import font_files
 
@@ -145,10 +146,10 @@ def render(
     work.mkdir(parents=True, exist_ok=True)
 
     ass_name: Optional[str] = None
-    ass = build_ass(edit, props.get("customStyles") or [], total, draw_dim=False)
-    if ass:
+    script = build_script(edit, props.get("customStyles") or [], total, draw_dim=False)
+    if script is not None:
         ass_name = "captions.ass"
-        (work / ass_name).write_text(ass, encoding="utf-8")
+        (work / ass_name).write_text(script.render(), encoding="utf-8")
         fonts = work / "fonts"
         fonts.mkdir(exist_ok=True)
         for f in font_files():
@@ -156,7 +157,7 @@ def render(
 
     matrix, full_range = source_color(ffprobe, source_path)
     plan = build_plan(props, str(source_path), has_audio=has_audio, ass_file=ass_name, matrix=matrix, full_range=full_range,
-                      dim=hook_dim(edit, total))
+                      dim=hook_dim(edit, total), shaping=script is not None and script.shaped)
     for name, content in plan.files.items():
         (work / name).write_text(content, encoding="utf-8")
     (work / "graph.txt").write_text(plan.graph, encoding="utf-8")

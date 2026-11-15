@@ -209,8 +209,9 @@ def color_filters(matrix: str, full_range: bool) -> str:
 
 def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_file: Optional[str] = None,
                fonts_dir: str = "fonts", matrix: str = "bt709", full_range: bool = False,
-               dim: Sequence[tuple[int, float]] = ()) -> Plan:
+               dim: Sequence[tuple[int, float]] = (), shaping: bool = False) -> Plan:
     """`ass_file` / `fonts_dir` are paths relative to the directory ffmpeg runs in (no escaping needed).
+    `shaping` draws the script with libass's HarfBuzz shaper (ass.Script.shaped: Arabic-script text).
     `matrix` / `full_range` say how the source's colours must be read."""
     edit = props["edit"]
     pieces: list[dict[str, Any]] = edit["video"]
@@ -319,7 +320,11 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
         b.files["dim.cmd"] = "\n".join(lines) + "\n"
         y0, c0 = lut(dim[0][1])
         chain.append(f"sendcmd=f=dim.cmd,lutyuv@dim=y='{y0}':u='{c0}':v='{c0}':enable='lt(n,{last})'")
-    if ass_file:
+    if ass_file and shaping:
+        # The subtitles filter always runs libass with its simple shaper, which leaves a gap after every
+        # lam-alef and knows no contextual forms; the ass filter can be told to shape with HarfBuzz.
+        chain.append(f"ass=filename={ass_file}:fontsdir={fonts_dir}:shaping=complex")
+    elif ass_file:
         chain.append(f"subtitles=filename={ass_file}:fontsdir={fonts_dir}")
     if chain:
         b.parts.append(f"[{cur}]" + ",".join(chain) + "[fx]")

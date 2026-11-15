@@ -8,14 +8,21 @@ result does not depend on its line breaking or spacing rules.
 
 Layers (bottom to top): hook dim 0, hook shadow 1, hook card 2, hook text 3,
 caption page background 10, caption glows / extra shadows 11, active-word box 12, caption text 13.
+
+Text the caption font has every character for is written as before: one font, measured letter by letter,
+drawn by libass's simple shaper. Text that needs the fallback font (Arabic script: Persian, Arabic, Urdu)
+makes the whole script "shaped": words are split into runs per font, measured with HarfBuzz, ordered
+right to left by bidi.py and drawn by libass's HarfBuzz shaper (see Script.shaped and graph.build_plan).
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
+from . import bidi
 from . import model as m
-from .text import Color, Font, Shadow, font, parse_color, parse_shadows
+from .text import RLM, Color, Font, Shadow, ShaperUnavailable, fallback_font, font, parse_color, parse_shadows, shaped_width, split_runs
 
 
 class Unsupported(Exception):
@@ -79,9 +86,22 @@ def rounded_rect(cx: float, cy: float, w: float, h: float, r: float) -> str:
     )
 
 
+@dataclass(frozen=True)
+class Label:
+    """One piece of text as it is drawn: a caption word or a line of the hook card."""
+    text: str
+    width: float                                            # px at the size it was measured for
+    runs: Optional[tuple[tuple[Font, str], ...]] = None     # per font, in reading order; None = unshaped
+    rtl: bool = False                                       # drawn right to left (shaped scripts only)
+    spacing_em: float = 0.0                                 # letter-spacing it is drawn with
+
+
 class Script:
     def __init__(self) -> None:
         self.events: list[str] = []
+        # True when some text needs the fallback font: every label is then measured with HarfBuzz and the
+        # script must be drawn by libass's HarfBuzz shaper with kerning on (as Chrome draws it).
+        self.shaped = False
 
     def _add(self, layer: int, f0: int, f1: int, text: str) -> None:
         if f1 > f0:
@@ -96,13 +116,29 @@ class Script:
             tags += f"\\blur{_n(blur)}"
         self._add(layer, f0, f1, f"{{{tags}\\p1}}{rounded_rect(cx, cy, w, h, r)}{{\\p0}}")
 
-    def text(self, layer: int, f0: int, f1: int, fnt: Font, text: str, cx: float, cy: float, em: float, fill: Color,
+    def text(self, layer: int, f0: int, f1: int, fnt: Font, label: Label, cx: float, cy: float, em: float, fill: Color,
              opacity: float = 1.0, *, spacing: float = 0.0, border: float = 0.0, border_color: Optional[Color] = None,
              shadow: Optional[Shadow] = None, shadow_scale: float = 1.0, blur: float = 0.0) -> None:
-        if not text or em <= 0.5:
+        """`fnt` is the caption font: it sets the baseline, also for runs drawn in the fallback font."""
+        if not label.text or em <= 0.5:
             return
+        if label.runs is None:
+            first, y, direction, body = fnt, cy + fnt.center_shift(em), "", clean_text(label.text)
+        else:
+            # CSS puts the baseline where the caption font's line box has it, whatever font the glyphs
+            # come from; libass centres (\an5) the tallest ascent + descent of the fonts in the event.
+            fonts = [f for f, _ in label.runs]
+            asc = max(f.win_ascent / f.upm for f in fonts)
+            desc = max(f.win_descent / f.upm for f in fonts)
+            first, y = fonts[0], cy + ((fnt.hhea_ascent + fnt.hhea_descent) / fnt.upm - (asc - desc)) / 2 * em
+            body = "".join((f"{{\\fn{f.ass_family}\\fs{_n(f.ass_size(em))}}}" if i else "") + clean_text(t)
+                           for i, (f, t) in enumerate(label.runs))
+            # \fe-1 lets libass take the direction from the first strong character: the mark makes it RTL
+            direction = "\\fe-1" if label.rtl else ""
+            if label.rtl:
+                body = RLM + body
         tags = (
-            f"\\an5\\pos({_n(cx)},{_n(cy + fnt.center_shift(em))})\\fn{fnt.ass_family}\\fs{_n(fnt.ass_size(em))}\\b0\\i0"
+            f"\\an5\\pos({_n(cx)},{_n(y)}){direction}\\fn{first.ass_family}\\fs{_n(first.ass_size(em))}\\b0\\i0"
             f"\\fsp{_n(spacing)}\\1c{fill.ass()}\\1a{fill.ass_alpha(opacity)}\\bord{_n(border)}"
         )
         if border > 0 and border_color is not None:
@@ -114,10 +150,11 @@ class Script:
             tags += "\\shad0"
         if blur > 0:
             tags += f"\\blur{_n(blur)}"
-        self._add(layer, f0, f1, f"{{{tags}}}{clean_text(text)}")
+        self._add(layer, f0, f1, f"{{{tags}}}{body}")
 
     def render(self) -> str:
-        return HEADER + "\n".join(self.events) + "\n"
+        head = HEADER.replace("WrapStyle: 2\n", "WrapStyle: 2\nKerning: yes\n") if self.shaped else HEADER
+        return head + "\n".join(self.events) + "\n"
 
 
 def fit_scale(measured: float, max_w: float) -> float:
@@ -133,24 +170,49 @@ def _color(value: str, what: str) -> Color:
     return c
 
 
-def _need_font(family: str, texts: Sequence[str]) -> Font:
+def _needs_fallback(family: str, texts: Sequence[str]) -> bool:
+    """True when `texts` have characters the font lacks and the fallback font has."""
+    f, fb = font(family), fallback_font()
+    if f is None or fb is None:
+        return False
+    return any(fb.has(c) for t in texts for c in f.missing(t))
+
+
+def _need_font(family: str, texts: Sequence[str], shaped: bool) -> Font:
     f = font(family)
     if f is None:
         raise Unsupported(f"font '{family}' is not bundled with the fast renderer")
+    fb = fallback_font()
     missing: set[str] = set()
     for t in texts:
-        missing |= f.missing(t)
+        missing |= split_runs(t, f, fb)[1] if shaped else f.missing(t)
     if missing:
         sample = "".join(sorted(missing))[:8]
-        raise Unsupported(f"characters not in the caption font {family}: {sample}")
+        also = f" or its fallback {fb.family}" if fb is not None else ""
+        raise Unsupported(f"characters not in the caption font {family}{also}: {sample}")
     return f
+
+
+def _label(text: str, fnt: Font, size: float, letter_spacing: float, shaped: bool) -> Label:
+    """Measure `text` at `size` px per em. Unshaped: letter by letter in the caption font (as measureText
+    does for Latin). Shaped: per font run with HarfBuzz; joined scripts get no letter-spacing."""
+    if not shaped:
+        return Label(text, fnt.width(text, size, letter_spacing), None, False, letter_spacing)
+    fb = fallback_font()
+    runs = tuple(split_runs(text, fnt, fb)[0])
+    ls = 0.0 if bidi.has_cursive_script(text) else letter_spacing
+    try:
+        width = shaped_width(runs, size, fb, ligatures=ls == 0)
+    except ShaperUnavailable as e:
+        raise Unsupported(f"captions in Arabic script need a package that is missing: {e}") from e
+    return Label(text, width + ls * size * m._js_len(text), runs, False, ls)
 
 
 # ── captions ──────────────────────────────────────────────────────────────
 @dataclass
 class _PageLayout:
     page: m.CaptionPage
-    texts: list[str]                 # display text per word (page order)
+    labels: list[Label]              # display text per word (page order)
     widths: list[float]              # px at style fontSize
     rel: list[tuple[float, float]]   # word centre relative to the block centre, unscaled
     n_lines: int
@@ -160,7 +222,12 @@ class _PageLayout:
     appear_frame: int
 
 
-def _layout_pages(pages: Sequence[m.CaptionPage], style: dict[str, Any], fnt: Font, safe_zone: str) -> list[_PageLayout]:
+def _display(w: dict[str, Any], style: dict[str, Any]) -> str:
+    return w["w"].upper() if style.get("uppercase") else w["w"]
+
+
+def _layout_pages(pages: Sequence[m.CaptionPage], style: dict[str, Any], fnt: Font, safe_zone: str, shaped: bool,
+                  base: str) -> list[_PageLayout]:
     size, ls = float(style["fontSize"]), float(style["letterSpacing"])
     gap = size * 0.28
     pad = float(style["pagePadding"])
@@ -172,21 +239,26 @@ def _layout_pages(pages: Sequence[m.CaptionPage], style: dict[str, Any], fnt: Fo
         if style.get("emoji") and any(w.get("emoji") for w in page.words):
             raise Unsupported("emoji captions are drawn by the Studio renderer only")
         lines = m.layout_lines(page.words, int(style["maxCharsPerLine"]))
-        disp = {id(w): (w["w"].upper() if style.get("uppercase") else w["w"]) for w in page.words}
-        width = {id(w): fnt.width(disp[id(w)], size, ls) for w in page.words}
+        label = {id(w): _label(_display(w, style), fnt, size, ls, shaped) for w in page.words}
+        width = {id(w): label[id(w)].width for w in page.words}
         rel: dict[int, tuple[float, float]] = {}
         widest = 0.0
         for li, line in enumerate(lines):
             lw = sum(width[id(w)] for w in line) + gap * (len(line) - 1)
             widest = max(widest, lw)
             x = -lw / 2
-            for w in line:
+            # left to right on screen: the reading order for Latin, reversed for a right-to-left line
+            dirs = bidi.resolve_word_directions([w["w"] for w in line], base)
+            for i in bidi.visual_order(dirs, base):
+                w = line[i]
                 rel[id(w)] = (x + width[id(w)] / 2, (li - (len(lines) - 1) / 2) * line_h)
                 x += width[id(w)] + gap
+                if dirs[i] == bidi.RTL and shaped:
+                    label[id(w)] = dataclasses.replace(label[id(w)], rtl=True)
         scale_fit = fit_scale(widest + pad * 2, max_w)
         block_frac = (len(lines) * line_h + pad * 2) / m.OUT_H
         out.append(_PageLayout(
-            page=page, texts=[disp[id(w)] for w in page.words], widths=[width[id(w)] for w in page.words],
+            page=page, labels=[label[id(w)] for w in page.words], widths=[width[id(w)] for w in page.words],
             rel=[rel[id(w)] for w in page.words], n_lines=len(lines), widest=widest, scale_fit=scale_fit,
             pos=m.clamp_to_safe_zone(float(style["position"]), zone, block_frac * scale_fit),
             appear_frame=m.js_round(page.start * m.OUT_FPS),
@@ -199,7 +271,7 @@ def _emit_caption(script: Script, lay: _PageLayout, active: int, anim_frame: int
     e = m.entrance(style["anim"], anim_frame)
     if e.opacity <= 0.002:
         return
-    size, ls = float(style["fontSize"]), float(style["letterSpacing"])
+    size = float(style["fontSize"])
     pad = float(style["pagePadding"])
     line_h = size * float(style["lineHeight"])
     s_block = lay.scale_fit * e.scale
@@ -229,29 +301,36 @@ def _emit_caption(script: Script, lay: _PageLayout, active: int, anim_frame: int
         wx, wy = cx0 + lay.rel[i][0] * s_block, cy0 + lay.rel[i][1] * s_block
         em = size * k
         border = stroke / 2 * k
-        spacing = ls * size * k
+        spacing = lay.labels[i].spacing_em * size * k
         if boxed:
             script.rect(12, f0, f1, wx, wy, (lay.widths[i] + 2 * 0.12 * size) * s_block, line_h * s_block,
                         float(style["boxRadius"]) * s_block, colors["box"], e.opacity)
         # CSS paints the first listed shadow on top, so draw the list back to front
         for sh in reversed(glows):
-            script.text(11, f0, f1, fnt, lay.texts[i], wx + sh.dx * k, wy + sh.dy * k, em, sh.color, e.opacity, spacing=spacing,
+            script.text(11, f0, f1, fnt, lay.labels[i], wx + sh.dx * k, wy + sh.dy * k, em, sh.color, e.opacity, spacing=spacing,
                         border=border, border_color=sh.color, blur=sh.blur / 2 * k)
         for sh in reversed(hard[1:]):
-            script.text(11, f0, f1, fnt, lay.texts[i], wx + sh.dx * k, wy + sh.dy * k, em, sh.color, e.opacity, spacing=spacing,
+            script.text(11, f0, f1, fnt, lay.labels[i], wx + sh.dx * k, wy + sh.dy * k, em, sh.color, e.opacity, spacing=spacing,
                         border=border, border_color=sh.color)
-        script.text(13, f0, f1, fnt, lay.texts[i], wx, wy, em, fill, e.opacity, spacing=spacing, border=border,
+        script.text(13, f0, f1, fnt, lay.labels[i], wx, wy, em, fill, e.opacity, spacing=spacing, border=border,
                     border_color=colors["stroke"], shadow=hard[0] if hard else None, shadow_scale=k)
 
 
-def add_captions(script: Script, edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int) -> None:
+def _caption_setup(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]]) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    """(style, words on the timeline) when the edit shows captions."""
     cap = edit.get("captions") or {}
     if not cap.get("enabled"):
-        return
+        return None
     style = m.resolve_caption_style(cap.get("styleId") or "", cap.get("overrides") or {}, custom_styles)
     words = m.caption_words_on_timeline(edit["video"], cap.get("words") or [])
-    if not words:
+    return (style, words) if words else None
+
+
+def add_captions(script: Script, edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int) -> None:
+    setup = _caption_setup(edit, custom_styles)
+    if setup is None:
         return
+    style, words = setup
     pages = m.paginate(words, style)
     shadows = parse_shadows(str(style.get("shadow") or "none"))
     if shadows is None:
@@ -261,9 +340,10 @@ def add_captions(script: Script, edit: dict[str, Any], custom_styles: Sequence[d
         "emphasis": _color(style["emphasisColor"], "caption emphasis colour"), "box": _color(style["boxColor"], "caption box colour"),
         "stroke": _color(style["strokeColor"], "caption outline colour"), "page": _color(style["pageBackground"], "caption background"),
     }
-    all_text = [(w["w"].upper() if style.get("uppercase") else w["w"]) for w in words]
-    fnt = _need_font(str(style["fontFamily"]), all_text)
-    layouts = _layout_pages(pages, style, fnt, str(edit.get("safeZone") or "none"))
+    fnt = _need_font(str(style["fontFamily"]), [_display(w, style) for w in words], script.shaped)
+    # one reading direction for the whole clip, as in Captions.tsx
+    base = bidi.base_direction(w["w"] for w in words)
+    layouts = _layout_pages(pages, style, fnt, str(edit.get("safeZone") or "none"), script.shaped, base)
     anim = str(style.get("anim") or "none")
 
     def state_at(n: int) -> Optional[tuple[int, int, int]]:
@@ -328,17 +408,27 @@ def hook_dim(edit: dict[str, Any], total_frames: int) -> list[tuple[int, float]]
     return out
 
 
-def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: bool = True) -> None:
+HOOK_FONT = "Montserrat"
+
+
+def _hook_text(edit: dict[str, Any]) -> Optional[str]:
     hook = edit.get("hook") or {}
     text = str(hook.get("text") or "")
-    if not hook.get("enabled") or not text.strip():
+    return text if hook.get("enabled") and text.strip() else None
+
+
+def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: bool = True) -> None:
+    text = _hook_text(edit)
+    if text is None:
         return
-    dur_f = m.js_round(float(hook.get("durationSec") or 0) * m.OUT_FPS)
+    dur_f = m.js_round(float((edit.get("hook") or {}).get("durationSec") or 0) * m.OUT_FPS)
     if dur_f <= 0:
         return
-    lines = hook_lines(text)
-    fnt = _need_font("Montserrat", lines)
-    widest = max(fnt.width(l, HOOK_FONT_SIZE) for l in lines)
+    fnt = _need_font(HOOK_FONT, hook_lines(text), script.shaped)
+    # a line is one event: libass orders its words, right to left when most of the hook's letters are
+    rtl = script.shaped and bidi.base_direction([text]) == bidi.RTL
+    lines = [dataclasses.replace(_label(l, fnt, HOOK_FONT_SIZE, 0.0, script.shaped), rtl=rtl) for l in hook_lines(text)]
+    widest = max(l.width for l in lines)
     safe_zone = str(edit.get("safeZone") or "none")
     fit = fit_scale(widest + 80, m.max_caption_width(safe_zone))
     zone = m.SAFE_ZONES.get(safe_zone) if safe_zone != "none" else None
@@ -369,10 +459,29 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: 
             prev, start = cur, n
 
 
-def build_ass(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int, draw_dim: bool = True) -> Optional[str]:
+def build_script(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int, draw_dim: bool = True) -> Optional[Script]:
     """The ASS script for this edit, or None when there is nothing to draw. Raises Unsupported.
     `draw_dim=False` leaves the hook's full-frame dim to the filter graph (see hook_dim)."""
     script = Script()
+    # Decided for the whole script first: one file is drawn by one shaper, so when any text needs the
+    # fallback font, every text is measured the way that shaper sets it.
+    text = _hook_text(edit)
+    setup = _caption_setup(edit, custom_styles)
+    script.shaped = bool(
+        (text is not None and _needs_fallback(HOOK_FONT, hook_lines(text)))
+        or (setup is not None and _needs_fallback(str(setup[0].get("fontFamily")), [_display(w, setup[0]) for w in setup[1]]))
+    )
+    # glyphs first: text no bundled font has is the reason to give, before anything is measured
+    if text is not None:
+        _need_font(HOOK_FONT, hook_lines(text), script.shaped)
+    if setup is not None:
+        _need_font(str(setup[0]["fontFamily"]), [_display(w, setup[0]) for w in setup[1]], script.shaped)
     add_hook(script, edit, total_frames, draw_dim)
     add_captions(script, edit, custom_styles, total_frames)
-    return script.render() if script.events else None
+    return script if script.events else None
+
+
+def build_ass(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], total_frames: int, draw_dim: bool = True) -> Optional[str]:
+    """build_script() as text."""
+    script = build_script(edit, custom_styles, total_frames, draw_dim)
+    return script.render() if script is not None else None

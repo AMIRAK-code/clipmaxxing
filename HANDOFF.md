@@ -31,7 +31,8 @@ never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=d
      Remotion; any fast failure falls back to Remotion. `renders.options.rendered_by` / `fast_skipped`
      record what happened. `options.engine = "studio"` (Export panel switch) or `KLIPZ_RENDER_ENGINE`.
    - Unsupported (falls back): b-roll, added audio / voiceover, text overlays, piece transitions, looks,
-     emoji captions, non-plain colours, unbundled fonts or glyphs, HDR / BT.2020, clips without edit_state.
+     emoji captions, non-plain colours, unbundled fonts or glyphs (Arabic script is bundled since the
+     right-to-left work below), HDR / BT.2020, clips without edit_state.
    - Measured on the owner's laptop (i7-1255U): 20 s clip, real footage, blurred letterbox: 15 s fast vs
      ~80-100 s Studio. e2e total 443 s -> 167 s.
    - Gotchas found: `drawbox` blends chroma 4x on yuv420p (hence `lutyuv` for the dim); a full-frame
@@ -90,6 +91,45 @@ never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=d
    chain when the crop window size changes and applies the level per piece (`model.py::piece_*`); a
    piece with its own look is rendered by Studio.
 
+### After v0.2.1 (not released): right-to-left captions
+Persian / Arabic / Urdu / Kurdish clips are now drawn by the fast renderer, and the Studio renderer orders
+their words correctly (it used to lay Persian words out left to right, in a system font).
+- **Font**: `FALLBACK_FONT` in `packages/shared/src/presets.ts` = Vazirmatn 900 (OFL, `@fontsource/vazirmatn`
+  arabic subset; `scripts/copy-fonts.mjs` -> `apps/web/public/fonts/vazirmatn-900.woff2`,
+  `scripts/convert-fonts.py` -> `fastrender/fonts/vazirmatn-900.ttf` + `"fallback": true` in `fonts.json`).
+  Used per character for what the caption font lacks, like a browser does: `fontStack()` in the Studio
+  components, `text.split_runs()` in the worker. `fonts.ts` loads it for every weight.
+- **Word order**: `packages/shared/src/bidi.ts` and its port `fastrender/bidi.py` (same test cases on both
+  sides). One reading direction per clip (majority of the caption letters; the hook card decides for
+  itself), words placed right to left, a run of Latin words / their numbers keeps its own order.
+  `Captions.tsx` renders the flex children in that order with `direction: rtl` per word; `ass.py` puts
+  the words at the same places. Joined scripts get no letter-spacing in either renderer.
+- **Shaping**: text that needs the fallback font makes the whole ASS script "shaped" (`Script.shaped`):
+  widths come from HarfBuzz (`text.shaped_width`, Python package `uharfbuzz`, new in `requirements.txt`),
+  the header gets `Kerning: yes`, right-to-left events carry `\fe-1` + a leading RLM, and
+  `graph.build_plan(shaping=True)` draws the script with `ass=...:shaping=complex` instead of `subtitles=`.
+  Scripts without such text are byte-identical to 0.2.1 (same filter, same header, same numbers).
+- Refused as before (Studio renders them): characters in neither font (CJK, Hebrew ...), reason
+  "characters not in the caption font X or its fallback Vazirmatn"; and Arabic script when `uharfbuzz`
+  cannot be imported (reason names the package).
+- Findings worth keeping: ffmpeg's `subtitles` filter always uses libass's simple (FriBidi) shaper: it
+  leaves a blank the width of `.notdef` after every lam-alef and has no contextual forms; only the `ass`
+  filter takes `shaping=complex`. libass ignores RLE / RLI / RLM for the base direction unless `\fe-1` is
+  set, and kerning is off unless the header says `Kerning: yes`. Pillow in the venv has no raqm.
+- **The venv needs `uharfbuzz`**: the packaged app re-runs pip when `requirements.txt` changes; for
+  `npm start` / tests run `%USERPROFILE%\.klipz\venv\Scripts\python -m pip install -r apps\worker\requirements.txt`
+  once (not done here: that venv belongs to the running app). Without it the new shaping tests skip and
+  Persian clips keep going to Studio.
+- Verified: the owner's link `https://youtu.be/d7NED6aq7aQ` in an isolated data folder (ports 3210 / 8911,
+  `uharfbuzz` on `PYTHONPATH`): 5 clips, all `rendered_by: fast` (~27 s each). One of them was also exported
+  with Studio (85 s): same lines, order, highlight and hook card; SSIM 0.96 over the clip (the video encode).
+  Synthetic Persian clips in 4 caption styles: text edges within 1-2 px of Studio on steady frames (up to 7 px
+  for a frame or two at page changes and entrance animations). Latin edits: ASS script + filter graph
+  byte-identical to 0.2.1 for every preset x safe zone x hook (48 edits). `npx vitest run` 506 passed;
+  worker `pytest` 226 passed with `uharfbuzz`, 223 passed + 3 skipped without.
+- `convert-fonts.py` now writes the same bytes on every run; its first re-run rewrites the seven Latin TTFs
+  once (timestamp only), which is why they were left untouched in this change.
+
 ## How it was verified (v0.2.1)
 
 - `npx vitest run`: 501 passed. Worker `pytest`: 218 passed, 2 skipped (the slow real-Whisper tests were not run this time).
@@ -103,9 +143,10 @@ never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=d
 
 ## Known gaps after v0.2.1
 
-- **Persian / Arabic captions are never drawn by the fast renderer** ("characters not in the caption
-  font"): every such clip takes the ~75 s Studio path. The owner's test video is Persian. Needs a bundled
-  Arabic-script font (e.g. Vazirmatn, OFL), RTL-aware line layout in `fastrender/text.py` / `ass.py`.
+- Right-to-left captions (see "After v0.2.1"): Hebrew has no bundled font (Studio draws it, in the right
+  order, with a system font). Text overlays (Studio only) get the fallback font but no direction handling.
+  A word that starts with Latin letters and ends in Persian ones without a space is drawn right to left
+  as a whole. The editor's style thumbnails (`caption-mini.tsx`) do not use the fallback font.
 - Transcription of music / long videos is slow on this CPU (120 s for 88 s of sung Persian) and its
   progress moves in 30 s windows.
 

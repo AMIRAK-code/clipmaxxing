@@ -1,11 +1,13 @@
 """Fonts, text measuring and CSS value parsing for the fast renderer."""
 from __future__ import annotations
 
+import functools
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 FONT_DIR = Path(__file__).with_name("fonts")
 _FONTS = json.loads(Path(__file__).with_name("fonts.json").read_text(encoding="utf-8"))
@@ -45,6 +47,7 @@ class Font:
         return ((self.hhea_ascent + self.hhea_descent) - (self.win_ascent - self.win_descent)) / 2 / self.upm * css_px
 
 
+@functools.lru_cache(maxsize=None)
 def font(family: str) -> Optional[Font]:
     f = _FONTS.get(family)
     if not f:
@@ -53,8 +56,90 @@ def font(family: str) -> Optional[Font]:
                 f["winDescent"], {int(k): v for k, v in f["advances"].items()})
 
 
+def fallback_font() -> Optional[Font]:
+    """The font drawn for characters a caption font lacks (Arabic script); see FALLBACK_FONT in presets.ts."""
+    return next((font(name) for name, f in _FONTS.items() if f.get("fallback")), None)
+
+
 def font_files() -> list[Path]:
     return [FONT_DIR / f["file"] for f in _FONTS.values()]
+
+
+# ── font runs and shaped text ─────────────────────────────────────────────
+# Arabic script cannot be measured letter by letter: every letter has up to four joined forms, some
+# pairs fuse (lam + alef) and the font swaps in longer forms depending on the neighbours. Text that needs
+# the fallback font is therefore measured with HarfBuzz, the shaper libass and Chrome draw it with.
+RLM = "\u200f"  # right-to-left mark
+
+
+# format characters libass never draws (zero-width joiners and spaces, direction marks, soft hyphen)
+_INVISIBLE = frozenset([0x00AD, 0x061C, 0xFEFF, *range(0x200B, 0x2010), *range(0x202A, 0x202F), *range(0x2060, 0x206A)])
+
+
+def _transparent(ch: str) -> bool:
+    """Marks and invisible format characters (ZWNJ, ZWJ ...): they belong to the letter before them."""
+    return ord(ch) in _INVISIBLE or unicodedata.category(ch) in ("Mn", "Me", "Mc")
+
+
+def split_runs(text: str, primary: Font, fallback: Optional[Font]) -> tuple[list[tuple[Font, str]], set[str]]:
+    """`text` as runs of one font each, the way a browser falls back per character: the caption font where
+    it has the character, else the fallback font. Also returns the characters neither font has."""
+    fonts: list[Optional[Font]] = []
+    missing: set[str] = set()
+    for ch in text:
+        if _transparent(ch):
+            fonts.append(None)
+        elif ch.isspace() or primary.has(ch):
+            fonts.append(primary)
+        elif fallback is not None and fallback.has(ch):
+            fonts.append(fallback)
+        else:
+            fonts.append(primary)
+            missing.add(ch)
+    first = next((f for f in fonts if f is not None), primary)
+    runs: list[tuple[Font, str]] = []
+    cur = first
+    for ch, f in zip(text, fonts):
+        if f is None:
+            # a combining mark needs a glyph in its letter's font; format characters draw nothing
+            if ord(ch) not in _INVISIBLE and not cur.has(ch):
+                missing.add(ch)
+        else:
+            cur = f
+        if runs and runs[-1][0] is cur:
+            runs[-1] = (cur, runs[-1][1] + ch)
+        else:
+            runs.append((cur, ch))
+    return runs, missing
+
+
+class ShaperUnavailable(RuntimeError):
+    pass
+
+
+@functools.lru_cache(maxsize=None)
+def _hb_font(file: str):
+    try:
+        import uharfbuzz as hb
+    except Exception as e:  # noqa: BLE001 - not installed, or its native part does not load
+        raise ShaperUnavailable(f"the HarfBuzz text shaper (Python package 'uharfbuzz') is not available: {e}") from e
+    return hb, hb.Font(hb.Face(hb.Blob.from_file_path(str(FONT_DIR / file))))
+
+
+@functools.lru_cache(maxsize=20000)
+def _shaped_units(file: str, text: str, rtl: bool, ligatures: bool) -> int:
+    hb, hb_font = _hb_font(file)
+    buf = hb.Buffer()
+    buf.add_str(text)
+    buf.direction, buf.script, buf.language = ("rtl", "Arab", "und") if rtl else ("ltr", "Latn", "und")
+    # what libass asks for with "Kerning: yes" (it drops ligatures when there is letter-spacing)
+    hb.shape(hb_font, buf, {"kern": True, "liga": ligatures, "clig": ligatures})
+    return sum(p.x_advance for p in buf.glyph_positions)
+
+
+def shaped_width(runs: Sequence[tuple[Font, str]], size: float, fallback: Optional[Font], ligatures: bool = True) -> float:
+    """Advance width in px of `runs` at `size` px per em, shaped by HarfBuzz. Raises ShaperUnavailable."""
+    return sum(_shaped_units(f.file, t, f is fallback, ligatures) * size / f.upm for f, t in runs)
 
 
 # ── colours ───────────────────────────────────────────────────────────────

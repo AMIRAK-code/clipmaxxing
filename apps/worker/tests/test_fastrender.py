@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from klipz_worker import fastrender, ffmpeg
-from klipz_worker.fastrender import ass, graph
+from klipz_worker.fastrender import ass, bidi, graph
 from klipz_worker.fastrender import model as m
-from klipz_worker.fastrender.text import font, font_files, parse_color, parse_shadows
+from klipz_worker.fastrender import text as text_mod
+from klipz_worker.fastrender.text import fallback_font, font, font_files, parse_color, parse_shadows, shaped_width, split_runs
 from klipz_worker.steps import render as render_step
 from klipz_worker.steps import smart_edit
 
@@ -404,3 +406,159 @@ def test_a_piece_with_its_own_look_goes_to_the_studio_renderer():
     assert "look" in (fastrender.unsupported_reason(props_for(edit)) or "")
     edit["video"][1]["look"] = "none"
     assert fastrender.unsupported_reason(props_for(edit)) is None
+
+
+# ── right-to-left captions (Persian, Arabic, Urdu) ─────────────────────────
+ZWNJ = "\u200c"
+FA_WORDS = [W("سلام", 1.0, 1.3), W("دوستان،", 1.35, 1.7), W("امروز", 1.75, 2.1), W("iPhone", 2.15, 2.5), W("15", 2.55, 2.8),
+            W(f"می{ZWNJ}خواهیم", 2.85, 3.3), W("کلاس", 3.35, 3.7), W("اول", 3.75, 4.1)]
+FA_HOOK = "چرا iPhone گران شد؟"
+
+
+def fa_edit(**kw) -> dict:
+    return smart_edit.build_edit(FA_WORDS, 0.5, 4.5, hook=FA_HOOK, **kw)
+
+
+def _text_events(script: str, layer: int) -> list[dict]:
+    """The text events of one layer: start time, position, whether drawn right to left, fill colour, text."""
+    out = []
+    for ln in script.splitlines():
+        mm = re.match(rf"Dialogue: {layer},([^,]+),[^,]+,D,,0,0,0,,\{{\\an5\\pos\(([-\d.]+),([-\d.]+)\)(.*?)\}}(.*)$", ln)
+        if mm:
+            tags = mm.group(4)
+            out.append({"start": mm.group(1), "x": float(mm.group(2)), "y": float(mm.group(3)), "rtl": "\\fe-1" in tags,
+                        "fill": re.search(r"\\1c(&H[0-9A-F]+&)", tags).group(1), "font": re.search(r"\\fn([^\\]+)", tags).group(1),
+                        "text": mm.group(5)})
+    return out
+
+
+def test_word_order_follows_the_reading_direction():
+    # the same cases as packages/shared/src/bidi.test.ts: the two renderers must order words alike
+    assert bidi.base_direction(["سلام", "iPhone", "دنیا"]) == "rtl" and bidi.base_direction(["Hello", "سلام", "world"]) == "ltr"
+    assert bidi.base_direction(["100%", "..."]) == "ltr"
+
+    def order(words: list[str], base: str) -> list[str]:
+        return [words[i] for i in bidi.visual_order(bidi.resolve_word_directions(words, base), base)]
+
+    assert order(["a", "b", "c"], "ltr") == ["a", "b", "c"]
+    assert order(["سلام", "دنیا", "خوب"], "rtl") == ["خوب", "دنیا", "سلام"]
+    # a Latin phrase keeps its own order inside a right-to-left line, and its number stays with it
+    assert order(["این", "Windows", "10", "Pro", "است"], "rtl") == ["است", "Windows", "10", "Pro", "این"]
+    # a number between Persian words is one more word of the line
+    assert order(["سال", "2024", "میلادی"], "rtl") == ["میلادی", "2024", "سال"]
+    assert order(["2024", "iPhone"], "rtl") == ["iPhone", "2024"]
+    # and the other way round: Arabic words inside an English line
+    assert order(["he", "said", "سلام", "علیکم", "loudly"], "ltr") == ["he", "said", "علیکم", "سلام", "loudly"]
+    assert bidi.resolve_word_directions(["قیمت", "۵۰", "است!"], "rtl") == ["rtl", "rtl", "rtl"]
+    assert bidi.has_cursive_script("سلام") and not bidi.has_cursive_script("Hello 123 שלום")
+
+
+def test_fallback_font_draws_what_the_caption_font_lacks():
+    mont, fb = font("Montserrat"), fallback_font()
+    assert fb is not None and fb.family == "Vazirmatn" and (text_mod.FONT_DIR / fb.file).stat().st_size > 10_000
+    runs, missing = split_runs("سلام!", mont, fb)
+    assert [(f.family, t) for f, t in runs] == [("Vazirmatn", "سلام"), ("Montserrat", "!")] and not missing
+    # joiners and vowel marks stay with their letters; Latin, digits and spaces stay in the caption font
+    runs, missing = split_runs(f"iPhone می{ZWNJ}رود بَد 20", mont, fb)
+    assert [(f.family, t) for f, t in runs] == [("Montserrat", "iPhone "), ("Vazirmatn", f"می{ZWNJ}رود"), ("Montserrat", " "),
+                                                 ("Vazirmatn", "بَد"), ("Montserrat", " 20")] and not missing
+    for sample in ("یہ ایک اچھی ویڈیو ہے ٹھیک", "اللَّهُ أَكْبَرُ لا إله", "پژوهش گچ ژاله ۱۲۳۴۵۶۷۸۹۰ ؟،؛"):
+        assert not split_runs(sample, mont, fb)[1], sample
+    assert split_runs("中文 שלום", mont, fb)[1] == set("中文שלום")    # in neither font
+
+
+def test_arabic_script_is_measured_as_it_is_shaped():
+    pytest.importorskip("uharfbuzz")
+    fb = fallback_font()
+
+    def w(t: str) -> float:
+        return shaped_width([(fb, t)], 100, fb)
+
+    assert 0 < w("سلام") < w("س") + w("ل") + w("ا") + w("م")     # joined letters, lam + alef fused
+    assert w(f"می{ZWNJ}خواهم") > w("میخواهم")                     # the non-joiner ends the first part
+    assert w("بَد") == w("بد")                                     # vowel marks take no room
+    mont = font("Montserrat")
+    assert shaped_width([(mont, "AVATAR")], 100, fb) < mont.width("AVATAR", 100)   # kerned, as libass draws shaped scripts
+
+
+def test_persian_captions_are_laid_out_right_to_left():
+    pytest.importorskip("uharfbuzz")
+    edit = fa_edit()
+    assert fastrender.unsupported_reason(props_for(edit)) is None
+    script = ass.build_script(edit, [], m.duration_in_frames(edit["video"]))
+    assert script is not None and script.shaped
+    text = script.render()
+    assert "Kerning: yes" in text
+    words = _text_events(text, 13)
+    by_start: dict[str, dict[str, dict]] = {}
+    for ev in words:
+        by_start.setdefault(ev["start"], {})[ev["text"].lstrip(text_mod.RLM)] = ev
+    # a frame-state that shows "سلام" and "دوستان،" on one line: the first word is on the right
+    state = next(s for s in by_start.values() if "سلام" in s and "دوستان،" in s and s["سلام"]["y"] == s["دوستان،"]["y"])
+    assert state["سلام"]["x"] > state["دوستان،"]["x"]
+    assert state["سلام"]["rtl"] and state["سلام"]["text"].startswith(text_mod.RLM) and state["سلام"]["font"] == "KLIPZ Vazirmatn"
+    # the gap between the two words is the style's (0.28 em), measured on shaped widths
+    style = m.resolve_caption_style(edit["captions"]["styleId"], {}, [])
+    fb = fallback_font()
+    half = (shaped_width([(fb, "سلام")], style["fontSize"], fb) + shaped_width([(fb, "دوستان،")], style["fontSize"], fb)) / 2
+    assert state["سلام"]["x"] - state["دوستان،"]["x"] == pytest.approx((half + style["fontSize"] * 0.28) * 1.0, rel=0.25)
+    # the highlight is on the spoken word: every word is drawn in the active colour at some point
+    active = parse_color(style["activeColor"]).ass()
+    for word in ("سلام", "دوستان،", "امروز", f"می{ZWNJ}خواهیم", "کلاس"):
+        fills = {ev["fill"] for ev in words if ev["text"].lstrip(text_mod.RLM) == word}
+        assert active in fills and len(fills) > 1, word
+    # Latin inside the Persian clip: caption font, left to right
+    latin = next(ev for ev in words if ev["text"] == "IPHONE")
+    assert latin["font"] == "KLIPZ Montserrat" and not latin["rtl"]
+    # the hook card: one event per line, right to left, switching font inside the line
+    hook = _text_events(text, 3)
+    assert hook and all(ev["rtl"] and ev["text"].startswith(text_mod.RLM) for ev in hook)
+    assert any("چرا" in ev["text"] and "{\\fnKLIPZ Montserrat" in ev["text"] and "IPHONE" in ev["text"] for ev in hook)
+
+
+def test_shaped_scripts_are_drawn_by_the_harfbuzz_shaper_and_latin_ones_as_before():
+    plan = graph.build_plan(props_for(fa_edit()), "in.mp4", has_audio=True, ass_file="captions.ass", shaping=True)
+    assert "ass=filename=captions.ass:fontsdir=fonts:shaping=complex" in plan.graph and "subtitles=" not in plan.graph
+    plain = graph.build_plan(props_for(edit_for()), "in.mp4", has_audio=True, ass_file="captions.ass")
+    assert "subtitles=filename=captions.ass:fontsdir=fonts" in plain.graph and "shaping" not in plain.graph
+    edit = edit_for()
+    script = ass.build_script(edit, [], m.duration_in_frames(edit["video"]))
+    text = script.render()
+    assert not script.shaped and "Kerning" not in text and "\\fe-1" not in text and text_mod.RLM not in text and "Vazirmatn" not in text
+
+
+def test_text_in_neither_font_is_still_refused():
+    for bad in ("你好", "שלום"):
+        edit = fa_edit()
+        edit["captions"]["words"][0]["w"] = bad
+        reason = fastrender.unsupported_reason(props_for(edit))
+        assert reason and "characters not in the caption font Montserrat or its fallback Vazirmatn" in reason, bad
+    hook = fa_edit()
+    hook["hook"]["text"] = "中文 hook"
+    assert "characters not in the caption font" in (fastrender.unsupported_reason(props_for(hook)) or "")
+
+
+def test_arabic_script_without_the_shaper_goes_to_the_studio_renderer(monkeypatch):
+    def no_shaper(_file: str):
+        raise text_mod.ShaperUnavailable("the HarfBuzz text shaper (Python package 'uharfbuzz') is not available: test")
+
+    text_mod._shaped_units.cache_clear()
+    monkeypatch.setattr(text_mod, "_hb_font", no_shaper)
+    try:
+        reason = fastrender.unsupported_reason(props_for(fa_edit()))
+        assert reason and "uharfbuzz" in reason
+        assert fastrender.unsupported_reason(props_for(edit_for())) is None      # Latin clips never need it
+    finally:
+        text_mod._shaped_units.cache_clear()
+
+
+def test_render_persian_clip(tmp_path: Path, sample_video: Path):
+    pytest.importorskip("uharfbuzz")
+    edit = fa_edit()
+    props = props_for(edit)
+    out = tmp_path / "fa.mp4"
+    ff, fp = ffmpeg.binaries()
+    info = fastrender.render(props, sample_video, out, tmp_path / "work", ffmpeg=ff, ffprobe=fp, has_audio=True)
+    assert _probe_frames(out) == info["frames"] == m.duration_in_frames(edit["video"])
+    assert "shaping=complex" in (tmp_path / "work" / "graph.txt").read_text(encoding="utf-8")
+    assert (tmp_path / "work" / "fonts" / fallback_font().file).exists()

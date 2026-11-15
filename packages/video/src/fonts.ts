@@ -1,5 +1,5 @@
 import { continueRender, delayRender, staticFile } from "remotion";
-import { FONT_FILES } from "@klipz/shared";
+import { FALLBACK_FONT, FONT_FILES } from "@klipz/shared";
 import { useEffect, useState } from "react";
 
 let loading: Promise<void> | null = null;
@@ -12,7 +12,12 @@ export function ensureFonts(timeoutMs = 15000): Promise<void> {
     return loading;
   }
   const jobs: Promise<unknown>[] = [];
-  for (const [family, files] of Object.entries(FONT_FILES)) {
+  // the script fallback answers to every weight, so no caption style gets a synthetic bold of it
+  const faces: [string, { file: string; weight: number | string }[]][] = [
+    ...Object.entries(FONT_FILES),
+    [FALLBACK_FONT.family, [{ file: FALLBACK_FONT.file, weight: "100 900" }]],
+  ];
+  for (const [family, files] of faces) {
     for (const f of files) {
       const face = new FontFace(family, `url(${staticFile(`fonts/${f.file}`)}) format("woff2")`, {
         weight: String(f.weight),
