@@ -15,6 +15,8 @@ const Create = z.object({
   youtubeUrl: z.string().url().max(500),
   /** what to run once the download finishes */
   then: z.enum(["analyze", "autoclip"]).optional(),
+  /** download size: auto = 1080p (720p for videos over an hour) */
+  quality: z.enum(["auto", "1080", "720", "480"]).optional(),
 });
 
 /** Create a project from a YouTube URL. File uploads go through /api/uploads. */
@@ -25,7 +27,7 @@ export const POST = route(async (req) => {
   const source = createSource(project.id, { origin: "youtube", sourceUrl: input.youtubeUrl, status: "importing" });
   const job = enqueueJob(
     "import_youtube",
-    { source_video_id: source.id, then: input.then },
+    { source_video_id: source.id, then: input.then, quality: input.quality ?? "auto" },
     { projectId: project.id, dedupeKey: `import:${source.id}` },
   );
   return ok({ project, source, job }, { status: 201 });

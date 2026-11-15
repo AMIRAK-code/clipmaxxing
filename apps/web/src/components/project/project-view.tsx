@@ -12,7 +12,7 @@ import { api, cn } from "@/lib/utils";
 import { ClipCard } from "./clip-card";
 import { ClipPreview } from "./clip-preview";
 import { ProjectHeader } from "./project-header";
-import { SourceCard } from "./source-card";
+import { importJob, SourceCard } from "./source-card";
 import { TrimControl } from "./trim-control";
 
 interface ProjectData {
@@ -175,7 +175,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <SourceCard source={source} />
+        <SourceCard source={source} job={importJob(jobs)} />
         <Card className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-start gap-3">
             <div className="flex flex-col gap-1">

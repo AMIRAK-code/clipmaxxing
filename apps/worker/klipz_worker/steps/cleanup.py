@@ -13,6 +13,7 @@ from ..runner import JobContext
 log = logging.getLogger("klipz.cleanup")
 
 PART_MAX_AGE = 24 * 3600
+ORPHAN_MAX_AGE = 3600  # a folder whose project is gone (its delete met a file still in use)
 JOB_RETENTION_DAYS = 30
 
 
@@ -105,6 +106,22 @@ def cleanup(ctx: JobContext, now: Optional[float] = None) -> dict[str, Any]:
                     parts += 1
             except OSError:
                 pass
+    # 2b. folders left behind by a deleted project: Windows refuses to remove a file that is still open
+    #     (a video being imported or previewed), so the delete in the app can leave some
+    orphans = 0
+    for kind, table in (("sources", "source_videos"), ("clips", "clips")):
+        base = root / kind
+        if not base.is_dir():
+            continue
+        known = {r[0] for r in db.conn.execute(f"select id from {table}").fetchall()}
+        for d in base.iterdir():
+            try:
+                if d.is_dir() and d.name not in known and now - d.stat().st_mtime > ORPHAN_MAX_AGE and _inside(base, d):
+                    freed += sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                    shutil.rmtree(d, ignore_errors=True)
+                    orphans += 1
+            except OSError as e:
+                log.warning("could not remove %s: %s", d, e)
     ctx.progress(0.7, "Stale uploads removed", force=True)
 
     # 3. old finished jobs
@@ -115,7 +132,7 @@ def cleanup(ctx: JobContext, now: Optional[float] = None) -> dict[str, Any]:
     )
     jobs = cur.rowcount if cur.rowcount is not None else 0
     ctx.progress(1.0, "Cleanup done", force=True)
-    result = {"sources_deleted": sources, "part_files_deleted": parts, "jobs_deleted": jobs, "bytes_freed": freed,
+    result = {"sources_deleted": sources, "part_files_deleted": parts, "jobs_deleted": jobs, "bytes_freed": freed, "orphan_folders_deleted": orphans,
               "sources_kept_busy": skipped}
     log.info("cleanup: %s", result)
     return result
