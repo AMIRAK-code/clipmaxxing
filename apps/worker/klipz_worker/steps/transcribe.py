@@ -75,15 +75,32 @@ def set_transcriber_override(t: Optional[Transcriber]) -> None:
 class FasterWhisperTranscriber:
     name = "faster-whisper"
 
-    def __init__(self, model: str = "small", device: str = "auto"):
+    def __init__(self, model: str = "small", device: str = "auto", models_root: Optional[Path] = None):
         self.model_name, self.device = model, device
+        # <data dir>/models: KLIPZ's own plain copy of the model (see whisper_model.py). None = let
+        # faster-whisper use the Hugging Face cache as it does on its own.
+        self.models_root = models_root
+        self.on_status: Optional[Callable[[str], None]] = None
+        self._model_path: Optional[str] = None
+
+    def model_path(self) -> str:
+        """Folder (or name) to load the model from, resolved once per transcription."""
+        if self._model_path is None:
+            if self.models_root is None:
+                self._model_path = self.model_name
+            else:
+                from ..whisper_model import ensure_model
+
+                self._model_path = ensure_model(self.model_name, self.models_root, self.on_status)
+        return self._model_path
 
     def _load(self, device: str, compute_type: str) -> Any:
         from faster_whisper import WhisperModel
 
+        path = self.model_path()
         if device == "cpu":
-            return WhisperModel(self.model_name, device=device, compute_type=compute_type, cpu_threads=whisper_threads())
-        return WhisperModel(self.model_name, device=device, compute_type=compute_type)
+            return WhisperModel(path, device=device, compute_type=compute_type, cpu_threads=whisper_threads())
+        return WhisperModel(path, device=device, compute_type=compute_type)
 
     def _run(self, model: Any, audio: Any, duration: float, on_progress: ProgressFn) -> dict[str, Any]:
         segments, info = model.transcribe(
@@ -190,7 +207,7 @@ def pick_transcriber(settings: Settings) -> Transcriber:
         except Exception:  # noqa: BLE001
             if want == "whisperx":
                 log.warning("TRANSCRIBER=whisperx but whisperx is not importable; using faster-whisper")
-    return FasterWhisperTranscriber(settings.whisper_model, settings.whisper_device)
+    return FasterWhisperTranscriber(settings.whisper_model, settings.whisper_device, settings.data_dir / "models")
 
 
 def normalise_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -225,12 +242,15 @@ def transcribe(ctx: JobContext, source_video_id: str, *, force: bool = False) ->
     tr = pick_transcriber(ctx.settings)
     tctx = ctx.sub(0.1, 0.95)
     tctx.progress(0.0, "Transcribing")
+    if hasattr(tr, "on_status"):
+        tr.on_status = lambda text: tctx.progress(0.0, text, force=True)  # e.g. the one-time model download
     try:
         result = tr.transcribe(audio_path, duration, lambda p: tctx.progress(p))
     except Exception as e:  # noqa: BLE001
         if _override is None and tr.name == "whisperx" and (ctx.settings.transcriber or "auto").lower() == "auto":
             log.warning("whisperx failed (%s); falling back to faster-whisper", e)
-            tr = FasterWhisperTranscriber(ctx.settings.whisper_model, ctx.settings.whisper_device)
+            tr = FasterWhisperTranscriber(ctx.settings.whisper_model, ctx.settings.whisper_device, ctx.settings.data_dir / "models")
+            tr.on_status = lambda text: tctx.progress(0.0, text, force=True)
             result = tr.transcribe(audio_path, duration, lambda p: tctx.progress(p))
         else:
             raise
