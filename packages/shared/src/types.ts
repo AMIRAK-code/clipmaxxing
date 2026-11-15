@@ -110,6 +110,12 @@ export interface VideoPiece {
   srcStart: number;
   srcEnd: number;
   transitionIn?: { type: TransitionType; durationSec: number };
+  /** this piece's own crop / zoom / position; absent = the clip's framing (EditState.frame or automatic) */
+  frame?: ManualFrame;
+  /** this piece's own look; absent = the clip's look */
+  look?: LookId;
+  /** this piece's own sound level (0..1.5); absent = the clip's volume */
+  volume?: number;
 }
 
 export interface BrollItem {
@@ -165,8 +171,8 @@ export interface ZoomKey {
 export type LookId = "none" | "warm" | "cool" | "cinematic" | "bw" | "vivid" | "fade";
 
 /**
- * Framing set by hand in the editor. When present it replaces the automatic crop track (face tracking)
- * for the whole clip.
+ * Framing set by hand in the editor. On EditState it replaces the automatic crop track (face tracking)
+ * for the whole clip; on a VideoPiece it applies to that piece only and wins over the clip's.
  */
 export interface ManualFrame {
   /** crop = fill the screen with a window of the picture; letterbox = the whole picture over a blurred copy */

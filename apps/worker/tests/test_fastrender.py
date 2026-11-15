@@ -341,3 +341,66 @@ def test_hook_dim_is_drawn_by_the_filter_graph():
     assert without < with_dim
     assert ass.hook_dim({**edit, "hook": {**edit["hook"], "enabled": False}}, total) == []
     assert "lutyuv" not in graph.build_plan(props_for(edit), "in.mp4", has_audio=True).graph
+
+
+# ── each piece of a split clip can have its own crop, look and volume ─────────
+def _pieces_edit() -> dict:
+    close = {"layout": "crop", "cx": 0.2, "cy": 0.5, "zoom": 2}
+    return {**smart_edit.build_edit(WORDS, 0.5, 5.0), "volume": 0.8, "video": [
+        {"id": "a", "srcStart": 0.5, "srcEnd": 2.5},                                  # the clip's framing
+        {"id": "b", "srcStart": 2.5, "srcEnd": 4.0, "frame": close},                  # its own close crop
+        {"id": "c", "srcStart": 4.0, "srcEnd": 5.0, "volume": 0.3,
+         "frame": {"layout": "crop", "cx": 0.9, "cy": 0.5, "zoom": 1.5}},             # another crop, quieter
+    ]}
+
+
+def test_piece_helpers_fall_back_to_the_clip():
+    auto = {"version": 1, "srcW": 1280, "srcH": 720, "segments": [{"start": 0, "end": 99, "layout": "letterbox", "keys": []}]}
+    edit = {"frame": {"layout": "crop", "cx": 0.5, "cy": 0.5, "zoom": 1}, "look": "warm", "volume": 0.8}
+    assert m.piece_crop_track({}, {"id": "a"}, auto, 1280, 720) is auto
+    assert m.piece_crop_track(edit, {"id": "a"}, auto, 1280, 720)["segments"][0]["zoom"] == 1.0
+    own = m.piece_crop_track(edit, {"frame": {"layout": "crop", "cx": 0.2, "cy": 0.5, "zoom": 2}}, auto, 1280, 720)
+    assert (own["segments"][0]["zoom"], own["segments"][0]["keys"][0]["cx"]) == (2.0, 0.2)
+    assert m.piece_look(edit, {}) == "warm" and m.piece_look(edit, {"look": "bw"}) == "bw" and m.piece_look({}, None) == "none"
+    assert m.piece_volume(edit, {}) == 0.8 and m.piece_volume(edit, {"volume": 0}) == 0.0
+    assert m.piece_volume(edit, {"volume": 9}) == 1.5 and m.piece_volume(edit, {"volume": "x"}) == 0.8 and m.piece_volume({}, {}) == 1.0
+
+
+def test_each_piece_gets_its_own_crop_and_volume_in_the_fast_renderer(tmp_path: Path, sample_video: Path):
+    edit = _pieces_edit()
+    auto = {"version": 1, "srcW": 1280, "srcH": 720, "segments": [{"start": 0, "end": 12, "layout": "letterbox", "keys": []}]}
+    plan = graph.build_plan(props_for(edit, auto), "in.mp4", has_audio=True)
+    # one decode (the pieces follow each other in the source), three differently framed stretches
+    assert len(plan.inputs) == 1
+    assert "gblur" in plan.graph                                   # piece a: the automatic letterbox
+    assert "crop=202:360:" in plan.graph                           # piece b: 405x720 window at zoom 2
+    assert "crop=270:480:" in plan.graph                           # piece c: at zoom 1.5
+    assert "concat=n=3:v=1:a=0" in plan.graph
+    # sound: each piece at its own level (the clip's 0.8 where it has none), no second gain on top
+    assert plan.graph.count(",volume=0.8[") == 2 and ",volume=0.3[" in plan.graph and "]volume=1[outa]" in plan.graph
+    assert plan.total_frames == m.duration_in_frames(edit["video"]) == 135
+
+    ff, fp = ffmpeg.binaries()
+    out = tmp_path / "pieces.mp4"
+    fastrender.render(props_for(edit, auto), sample_video, out, tmp_path / "w", ffmpeg=ff, ffprobe=fp, has_audio=True)
+    probe = ffmpeg.probe(out)
+    assert (probe["width"], probe["height"]) == (1080, 1920) and probe["duration"] == pytest.approx(4.5, abs=0.1)
+
+
+def test_two_pieces_with_the_same_crop_share_one_chain_and_plain_edits_are_unchanged():
+    frame = {"layout": "crop", "cx": 0.2, "cy": 0.5, "zoom": 2}
+    edit = {**_pieces_edit(), "video": [{"id": "a", "srcStart": 0.5, "srcEnd": 2.5, "frame": frame},
+                                        {"id": "b", "srcStart": 2.5, "srcEnd": 4.0, "frame": dict(frame)}]}
+    plan = graph.build_plan(props_for(edit), "in.mp4", has_audio=True)
+    assert "concat=n=2:v=1" not in plan.graph and plan.graph.count("crop=202:360:") == 1
+    # no piece has its own level: one gain for the whole clip, as before
+    assert ",volume=" not in plan.graph and "]volume=0.8[outa]" in plan.graph
+
+
+def test_a_piece_with_its_own_look_goes_to_the_studio_renderer():
+    edit = _pieces_edit()
+    assert fastrender.unsupported_reason(props_for(edit)) is None
+    edit["video"][1]["look"] = "bw"
+    assert "look" in (fastrender.unsupported_reason(props_for(edit)) or "")
+    edit["video"][1]["look"] = "none"
+    assert fastrender.unsupported_reason(props_for(edit)) is None

@@ -196,6 +196,29 @@ def effective_crop_track(edit: dict[str, Any], track: Optional[dict[str, Any]], 
     return manual_crop_track(frame, src_w, src_h) if isinstance(frame, dict) else track
 
 
+def piece_crop_track(edit: dict[str, Any], piece: Optional[dict[str, Any]], track: Optional[dict[str, Any]],
+                     src_w: int, src_h: int) -> Optional[dict[str, Any]]:
+    """crop.ts pieceCropTrack(): a piece's own frame first, then the clip's manual frame, then the automatic track."""
+    frame = (piece or {}).get("frame")
+    if isinstance(frame, dict):
+        return manual_crop_track(frame, src_w, src_h)
+    return effective_crop_track(edit, track, src_w, src_h)
+
+
+def piece_look(edit: dict[str, Any], piece: Optional[dict[str, Any]]) -> str:
+    """timeline.ts pieceLook()."""
+    return str((piece or {}).get("look") or edit.get("look") or "none")
+
+
+def piece_volume(edit: dict[str, Any], piece: Optional[dict[str, Any]]) -> float:
+    """timeline.ts pieceVolume(): the piece's own level (0..1.5), else the clip's."""
+    v = (piece or {}).get("volume")
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf"):
+        return min(1.5, max(0.0, float(v)))
+    clip = edit.get("volume")
+    return float(clip) if clip is not None else 1.0
+
+
 # ── captions ──────────────────────────────────────────────────────────────
 def resolve_caption_style(style_id: str, overrides: Optional[dict[str, Any]] = None, custom: Sequence[dict[str, Any]] = ()) -> dict[str, Any]:
     found = next((s for s in custom if s.get("id") == style_id), None) or next(

@@ -1,4 +1,4 @@
-import { MAX_FRAME_ZOOM, type CropKey, type CropSegment, type CropTrack, type EditState, type ManualFrame } from "./types";
+import { MAX_FRAME_ZOOM, type CropKey, type CropSegment, type CropTrack, type EditState, type ManualFrame, type VideoPiece } from "./types";
 
 export interface Rect {
   x: number;
@@ -139,6 +139,20 @@ export function manualCropTrack(frame: ManualFrame, srcW: number, srcH: number):
 /** The crop track a clip is drawn with: the manual frame when the editor set one, else the automatic track. */
 export function effectiveCropTrack(edit: Pick<EditState, "frame">, track: CropTrack | null, srcW: number, srcH: number): CropTrack | null {
   return edit.frame ? manualCropTrack(edit.frame, srcW, srcH) : track;
+}
+
+/**
+ * The crop track one piece of the clip is drawn with. After a split every piece can have its own crop:
+ * the piece's frame first, then the clip's manual frame, then the automatic track.
+ */
+export function pieceCropTrack(
+  edit: Pick<EditState, "frame">,
+  piece: Pick<VideoPiece, "frame"> | null | undefined,
+  track: CropTrack | null,
+  srcW: number,
+  srcH: number,
+): CropTrack | null {
+  return piece?.frame ? manualCropTrack(piece.frame, srcW, srcH) : effectiveCropTrack(edit, track, srcW, srcH);
 }
 
 /**

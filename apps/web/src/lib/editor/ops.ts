@@ -84,6 +84,35 @@ export const setTransition = (id: string, type: TransitionType, durationSec = 0.
   else p.transitionIn = { type, durationSec: clampNum(durationSec, 0.1, 2) };
 };
 
+// One piece's own crop / zoom / position, look and sound level. `null` hands the piece back to the clip's.
+export const setPieceFrame = (id: string, frame: ManualFrame | null): Recipe => (d) => {
+  const p = d.video.find((x) => x.id === id);
+  if (!p) return;
+  if (frame) p.frame = cleanFrame(frame);
+  else delete p.frame;
+};
+
+/** Change part of a piece's frame; a piece without one starts from the clip's manual frame, else centred. */
+export const patchPieceFrame = (id: string, patch: Partial<ManualFrame>): Recipe => (d) => {
+  const p = d.video.find((x) => x.id === id);
+  if (!p) return;
+  p.frame = cleanFrame({ layout: "crop", cx: 0.5, cy: 0.5, zoom: 1, ...(d.frame ?? {}), ...(p.frame ?? {}), ...patch });
+};
+
+export const setPieceLook = (id: string, look: LookId | null): Recipe => (d) => {
+  const p = d.video.find((x) => x.id === id);
+  if (!p) return;
+  if (look) p.look = look;
+  else delete p.look;
+};
+
+export const setPieceVolume = (id: string, volume: number | null): Recipe => (d) => {
+  const p = d.video.find((x) => x.id === id);
+  if (!p) return;
+  if (volume === null || !Number.isFinite(volume)) delete p.volume;
+  else p.volume = clampNum(volume, 0, 1.5);
+};
+
 // ── zoom keyframes ──────────────────────────────────────────────────────
 export const addZoomKey = (key: ZoomKey): Recipe => (d) => {
   d.zooms.push(key);

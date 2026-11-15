@@ -172,8 +172,10 @@ class _Builder:
 
 @dataclass
 class _Segment:
-    """Consecutive output frames that come from one input and share a layout kind."""
+    """Consecutive output frames that come from one input and share a layout kind (and, for a crop, the
+    size of the source window: one filter chain scales by one factor)."""
     kind: str
+    key: tuple = ()
     ranges: list[list[int]] = field(default_factory=list)      # [start, end) in the span's 30 fps grid
     frames: list[m.FrameLayout] = field(default_factory=list)
 
@@ -183,6 +185,7 @@ class _Span:
     grid0: int                 # absolute 30 fps grid index of the span's first frame
     segments: list[_Segment] = field(default_factory=list)
     audio: list[tuple[int, int]] = field(default_factory=list)   # (start, end) grid indices per piece
+    volumes: list[float] = field(default_factory=list)           # main-audio level per piece
     end: int = 0               # grid frames needed
 
 
@@ -212,7 +215,7 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
     edit = props["edit"]
     pieces: list[dict[str, Any]] = edit["video"]
     src_w, src_h = int(props["srcW"]), int(props["srcH"])
-    track = m.effective_crop_track(edit, props.get("cropTrack"), src_w, src_h)
+    auto_track = props.get("cropTrack")
     frames = m.piece_frames(pieces)
     total = sum(n for _f0, n in frames)
 
@@ -226,11 +229,15 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
             spans.append(_Span(grid0=g))
         span = spans[-1]
         local = g - span.grid0
+        # after a split every piece can have its own crop (ClipComposition / MainTrack do the same)
+        track = m.piece_crop_track(edit, piece, auto_track, src_w, src_h)
         for f in range(n):
             fl = m.layout_at(track, float(piece["srcStart"]) + f / FPS, src_w, src_h)
+            # two pieces with different zooms show windows of different sizes: separate chains
+            key = (fl.layout, round(fl.panes[0].src.w, 2), round(fl.panes[0].src.h, 2)) if fl.layout == "crop" else (fl.layout,)
             seg = span.segments[-1] if span.segments else None
-            if seg is None or seg.kind != fl.layout:
-                seg = _Segment(fl.layout)
+            if seg is None or seg.key != key:
+                seg = _Segment(fl.layout, key)
                 span.segments.append(seg)
             idx = local + f
             if seg.ranges and seg.ranges[-1][1] == idx:
@@ -239,9 +246,12 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
                 seg.ranges.append([idx, idx + 1])
             seg.frames.append(fl)
         span.audio.append((local, local + n))
+        span.volumes.append(m.piece_volume(edit, piece))
         span.end = local + n
         prev_end_grid = g + n
 
+    # pieces with their own sound level get it on their own stretch; otherwise one gain for the whole clip
+    own_levels = any(p.get("volume") is not None for p in pieces)
     b = _Builder(src_w, src_h)
     inputs: list[list[str]] = []
     v_labels: list[str] = []
@@ -279,7 +289,8 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
                 b.parts.append(f"[{abase}]asplit={len(abr)}" + "".join(f"[{x}]" for x in abr))
             for pi, ((a0, a1), br) in enumerate(zip(span.audio, abr)):
                 out = f"au{si}_{pi}"
-                b.parts.append(f"[{br}]atrim=start={_f(a0 / FPS)}:end={_f(a1 / FPS)},asetpts=PTS-STARTPTS[{out}]")
+                gain = f",volume={_f(max(0.0, span.volumes[pi]))}" if own_levels else ""
+                b.parts.append(f"[{br}]atrim=start={_f(a0 / FPS)}:end={_f(a1 / FPS)},asetpts=PTS-STARTPTS{gain}[{out}]")
                 a_labels.append(out)
 
     cur = v_labels[0]
@@ -330,7 +341,7 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
         if len(a_labels) > 1:
             b.parts.append("".join(f"[{x}]" for x in a_labels) + f"concat=n={len(a_labels)}:v=0:a=1[ca]")
             acur = "ca"
-        vol = float(edit.get("volume") if edit.get("volume") is not None else 1)
+        vol = 1.0 if own_levels else float(edit.get("volume") if edit.get("volume") is not None else 1)
         b.parts.append(f"[{acur}]volume={_f(max(0.0, vol))}[outa]")
     else:
         b.parts.append(f"anullsrc=r=48000:cl=stereo,atrim=end={_f(total / FPS)}[outa]")

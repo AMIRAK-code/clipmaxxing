@@ -1,6 +1,6 @@
 "use client";
 
-import { LOOKS, MAX_FRAME_ZOOM, pieceDuration, totalDuration, type LookId, type TransitionType } from "@klipz/shared";
+import { LOOKS, MAX_FRAME_ZOOM, pieceDuration, pieceVolume, totalDuration, type LookId, type TransitionType } from "@klipz/shared";
 import { Diamond, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import * as ops from "@/lib/editor/ops";
@@ -10,6 +10,8 @@ import { useEdit, useEditor, useEditorCtx } from "./editor-context";
 
 const TRANSITIONS: TransitionType[] = ["none", "fade", "slide", "zoom", "flash"];
 type FrameMode = "auto" | "crop" | "letterbox";
+type PieceFrameMode = "clip" | "crop" | "letterbox";
+type PieceLook = LookId | "clip";
 
 export function VideoPanel() {
   const ctx = useEditorCtx();
@@ -47,7 +49,8 @@ export function VideoPanel() {
         <p className="text-xs text-muted">
           {edit.frame
             ? "This crop is used for the whole clip instead of the automatic framing. Left / right and up / down move the window inside the picture; at zoom 1 a wide video can only move sideways."
-            : "Automatic uses the framing chosen when the clip was made (speaker tracking, centre or fit). Switch to manual to crop, zoom and position the video yourself."}
+            : "Automatic uses the framing chosen when the clip was made (speaker tracking, centre or fit). Switch to manual to crop, zoom and position the video yourself."}{" "}
+          To crop one part differently, split the video (S), select the piece and set its own crop under Selected piece.
         </p>
       </Section>
 
@@ -83,6 +86,59 @@ export function VideoPanel() {
             <p className="text-xs text-muted">
               Piece {pieceIdx + 1} of {edit.video.length} · {pieceDuration(piece).toFixed(2)} s · source {piece.srcStart.toFixed(2)}–{piece.srcEnd.toFixed(2)}
             </p>
+            <SelectInput<PieceFrameMode>
+              label="Crop"
+              value={piece.frame ? piece.frame.layout : "clip"}
+              options={[
+                { value: "clip", label: "Same as the clip" },
+                { value: "crop", label: "Own crop, zoom and position" },
+                { value: "letterbox", label: "Own: whole picture, blurred bars" },
+              ]}
+              onChange={(v) => st.apply(v === "clip" ? ops.setPieceFrame(piece.id, null) : ops.patchPieceFrame(piece.id, { layout: v }))}
+            />
+            {piece.frame?.layout === "crop" ? (
+              <>
+                <Slider label="Zoom" value={piece.frame.zoom} min={1} max={MAX_FRAME_ZOOM} step={0.05} onChange={(v) => st.apply(ops.patchPieceFrame(piece.id, { zoom: v }), `pframe-zoom:${piece.id}`)} format={(v) => `${v.toFixed(2)}×`} testId="piece-frame-zoom" />
+                <Slider label="Left / right" value={piece.frame.cx} min={0} max={1} step={0.005} onChange={(v) => st.apply(ops.patchPieceFrame(piece.id, { cx: v }), `pframe-cx:${piece.id}`)} format={(v) => `${Math.round(v * 100)}%`} testId="piece-frame-cx" />
+                <Slider label="Up / down" value={piece.frame.cy} min={0} max={1} step={0.005} onChange={(v) => st.apply(ops.patchPieceFrame(piece.id, { cy: v }), `pframe-cy:${piece.id}`)} format={(v) => `${Math.round(v * 100)}%`} testId="piece-frame-cy" />
+                <Button size="sm" variant="secondary" onClick={() => st.apply(ops.patchPieceFrame(piece.id, { cx: 0.5, cy: 0.5, zoom: 1 }))}>
+                  Centre and reset zoom
+                </Button>
+              </>
+            ) : null}
+            <SelectInput<PieceLook>
+              label="Look"
+              value={piece.look ?? "clip"}
+              options={[{ value: "clip", label: "Same as the clip" }, ...(Object.keys(LOOKS) as LookId[]).map((id) => ({ value: id as PieceLook, label: LOOKS[id].name }))]}
+              onChange={(v) => st.apply(ops.setPieceLook(piece.id, v === "clip" ? null : v))}
+            />
+            <Slider
+              label="Volume"
+              value={pieceVolume(edit, piece)}
+              min={0}
+              max={1.5}
+              step={0.05}
+              onChange={(v) => st.apply(ops.setPieceVolume(piece.id, v), `pvol:${piece.id}`)}
+              format={(v) => `${Math.round(v * 100)}%${piece.volume === undefined ? " (clip)" : ""}`}
+              testId="piece-volume"
+            />
+            {piece.frame || piece.look !== undefined || piece.volume !== undefined ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  st.apply((d) => {
+                    const p = d.video.find((x) => x.id === piece.id);
+                    if (!p) return;
+                    delete p.frame;
+                    delete p.look;
+                    delete p.volume;
+                  })
+                }
+              >
+                Use the clip&apos;s crop, look and volume
+              </Button>
+            ) : null}
             <SelectInput<TransitionType>
               label="Transition in"
               value={piece.transitionIn?.type ?? "none"}
@@ -105,7 +161,9 @@ export function VideoPanel() {
             </Button>
           </>
         ) : (
-          <p className="text-xs text-muted">Select a piece on the Video track. Split with S, then trim its edges or ripple delete it.</p>
+          <p className="text-xs text-muted">
+            Select a piece on the Video track. Split with S, then give each piece its own crop, zoom, position, look and volume, trim its edges or ripple delete it.
+          </p>
         )}
       </Section>
 

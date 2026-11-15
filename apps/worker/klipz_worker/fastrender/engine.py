@@ -47,6 +47,9 @@ def unsupported_reason(props: dict[str, Any]) -> Optional[str]:
         edit = _edit_of(props)
         if (edit.get("look") or "none") != "none":
             return f"the '{edit.get('look')}' look is drawn by the Studio renderer only"
+        for piece in edit.get("video") or []:
+            if (piece.get("look") or "none") != "none":
+                return f"a piece uses the '{piece.get('look')}' look, which is drawn by the Studio renderer only"
         if edit.get("broll"):
             return "b-roll is drawn by the Studio renderer only"
         if edit.get("audio"):
