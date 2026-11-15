@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import wave
 from functools import lru_cache
 from pathlib import Path
@@ -153,21 +154,121 @@ def pick_cuts(scores: list[tuple[float, float]], strong: float = SCENE_STRONG) -
     return merged
 
 
-def scene_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None) -> list[tuple[float, float]]:
-    """(time, scene score) for every proxy frame."""
-    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-i", str(src), "-an", "-vf",
-           f"fps={SCENE_FPS},scale=320:-2,select='gte(scene,0)',metadata=print:file=-", "-f", "null", "-"]
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
-    if res.returncode != 0:
-        raise FfmpegError(f"ffmpeg exited {res.returncode}: {res.stderr[-1500:]}")
+def _frame_values(args: list[str], key: str, on_time: Optional[Callable[[float], None]] = None) -> list[tuple[float, float]]:
+    """Run ffmpeg with a `metadata=print:file=-` filter and collect (pts_time, value of `key`) per frame.
+    Read as it is produced, so `on_time` gets the timestamp reached while a long scan is still running."""
+    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-loglevel", "error", *args, "-f", "null", "-"]
+    out: list[tuple[float, float]] = []
+    with tempfile.TemporaryFile() as err:  # a damaged file can print megabytes of warnings: never a pipe
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True, errors="replace")
+        assert proc.stdout is not None
+        t: Optional[float] = None
+        prefix = key + "="
+        for line in proc.stdout:
+            if line.startswith("frame:"):
+                m = re.search(r"pts_time:(-?[0-9.]+)", line)
+                t = float(m.group(1)) if m else None
+                if t is not None and on_time:
+                    on_time(t)
+            elif t is not None and line.startswith(prefix):
+                try:
+                    out.append((t, float(line[len(prefix):])))
+                except ValueError:
+                    pass
+        code = proc.wait()
+        if code != 0:
+            err.seek(0)
+            raise FfmpegError(f"ffmpeg exited {code}: {err.read().decode(errors='replace')[-1500:]}")
+    return out
+
+
+def scene_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None, *,
+                 start: Optional[float] = None, length: Optional[float] = None,
+                 duration: Optional[float] = None) -> list[tuple[float, float]]:
+    """(time, scene score) for every proxy frame of the whole file, or of `length` seconds from `start`.
+    Every frame is decoded: exact, but slow for 4K / 60 fps / AV1 sources (see keyframe_scores)."""
+    window = ["-ss", f"{max(0.0, start):.3f}"] if start is not None else []
+    if length is not None:
+        window += ["-t", f"{max(0.1, length):.3f}"]
+    span = length or duration
+    offset = max(0.0, start or 0.0)
+    rows = _frame_values(
+        [*window, "-i", str(src), "-an", "-vf", f"fps={SCENE_FPS},scale=320:-2,select='gte(scene,0)',metadata=print:file=-"],
+        "lavfi.scene_score",
+        (lambda t: on_progress(min(1.0, t / span))) if on_progress and span else None,
+    )
     if on_progress:
         on_progress(1.0)
-    return [(float(t), float(s)) for t, s in re.findall(r"pts_time:([0-9.]+)\s+lavfi\.scene_score=([0-9.]+)", res.stdout)]
+    return [(round(t + offset, 3), s) for t, s in rows]
 
 
-def scene_cuts(src: Path, threshold: float = SCENE_STRONG, on_progress: Optional[Callable[[float], None]] = None) -> list[float]:
+def scene_cuts(src: Path, threshold: float = SCENE_STRONG, on_progress: Optional[Callable[[float], None]] = None,
+               duration: Optional[float] = None) -> list[float]:
     """Timestamps (s) of shot changes (see the rule above). `threshold` is the strong-cut level."""
-    return pick_cuts(scene_scores(src, on_progress), threshold)
+    return pick_cuts(scene_scores(src, on_progress, duration=duration), threshold)
+
+
+def scene_cuts_between(src: Path, start: float, end: float) -> list[float]:
+    """Exact shot changes inside [start, end]: only that stretch is decoded (a second of margin each side
+    for the neighbourhood rule)."""
+    s0 = max(0.0, start - 1.0)
+    scores = scene_scores(src, start=s0, length=end - s0 + 1.0)
+    # the first frame of a window has nothing before it; its score says nothing
+    return [c for c in pick_cuts(scores[1:]) if start <= c <= end]
+
+
+# ── quick shot detection for import ───────────────────────────────────────────────────────────
+# Decoding every frame costs 2x real time for 4K 60 fps HEVC and 7x for 1080p AV1 on a laptop CPU: a
+# 5 minute phone video sat on "Detecting shot changes" for two and a half minutes. Import only needs to
+# know roughly how often the picture cuts (pacing score), so it reads the keyframes alone (`-discard
+# nokey`: the other packets never reach the decoder). Measured: 2.7 s instead of 143 s for that phone
+# video, 0.5 s instead of 26 s for a 2.7 minute AV1 music video. Encoders put a keyframe on a hard cut,
+# so the times are usually exact as well; where exactness matters (the crop switching on the cut inside
+# a rendered clip) scene_cuts_between() looks at that clip's stretch frame by frame.
+COARSE_MAX_GAP = 8.0  # average seconds between keyframes above which keyframes say too little
+COARSE_BIG = 0.15  # mean luma difference (0..1) between two keyframes that is a different picture outright
+
+
+def keyframe_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None,
+                    duration: Optional[float] = None) -> list[tuple[float, float]]:
+    """(time, mean luma difference 0..1 against the keyframe before it) per keyframe."""
+    rows = _frame_values(
+        ["-discard", "nokey", "-i", str(src), "-an", "-fps_mode", "passthrough",
+         "-vf", "scale=320:-2,scdet=threshold=0,metadata=print:file=-"],
+        "lavfi.scd.mafd",
+        (lambda t: on_progress(min(1.0, t / duration))) if on_progress and duration else None,
+    )
+    return [(round(t, 3), d / 100.0) for t, d in rows]
+
+
+def pick_coarse_cuts(diffs: list[tuple[float, float]]) -> list[float]:
+    """Pure: keyframe differences -> shot-change times. A keyframe counts when the picture differs
+    outright from the one before (COARSE_BIG), or when the difference jumps against the previous one
+    (ffmpeg's own scene score, min(diff, change of diff) >= SCENE_MIN): steady motion keeps the
+    difference level and is not a cut, a new picture is."""
+    cuts: list[float] = []
+    prev = 0.0
+    for i, (t, d) in enumerate(sorted(diffs)):
+        jump = min(d, abs(d - prev))
+        prev = d
+        if i == 0 or t < 0.2:
+            continue
+        if (d >= COARSE_BIG or jump >= SCENE_MIN) and (not cuts or t - cuts[-1] >= SCENE_MERGE):
+            cuts.append(round(t, 3))
+    return cuts
+
+
+def quick_scene_cuts(src: Path, duration: float, on_progress: Optional[Callable[[float], None]] = None) -> tuple[list[float], str]:
+    """(cuts, "coarse" | "full"). Keyframes when the file has enough of them, every frame otherwise."""
+    try:
+        frames = keyframe_scores(src, (lambda p: on_progress(0.9 * p)) if on_progress else None, duration)
+    except FfmpegError:
+        frames = []
+    if len(frames) >= 3 and duration / len(frames) <= COARSE_MAX_GAP:
+        if on_progress:
+            on_progress(1.0)
+        return pick_coarse_cuts(frames), "coarse"
+    return scene_cuts(src, on_progress=on_progress, duration=duration), "full"
 
 
 def decode_mono_16k(path: Path | str) -> np.ndarray:

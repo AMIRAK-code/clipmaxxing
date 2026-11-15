@@ -16,7 +16,7 @@ from .. import ffmpeg
 from ..reframe.detect import Detector, default_detector
 from ..reframe.planner import PlanConfig, Sample, plan_track
 from ..runner import JobContext, PermanentError
-from .ingest import source_file
+from .ingest import clip_cuts, source_file
 
 log = logging.getLogger("klipz.reframe")
 
@@ -186,7 +186,7 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
     transcript = db.one("transcripts", "select * from transcripts where source_video_id = ?", source["id"])
     track, infos = plan_track(
         start=start, end=end, src_w=src_w, src_h=src_h, samples=samples,
-        cuts=source.get("scene_cuts") or [], words=words_in_range(transcript, start, end), cfg=cfg,
+        cuts=clip_cuts(ctx, source, start, end), words=words_in_range(transcript, start, end), cfg=cfg,
     )
     ctx.progress(0.95, "Reframing: saving crop track", force=True)
     # Persist without bumping edit_version: the crop track is derived data.
