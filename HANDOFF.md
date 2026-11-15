@@ -1,7 +1,8 @@
-# KLIPZ handoff (updated 2026-11-14, version 0.2.0)
+# KLIPZ handoff (updated 2026-11-15, version 0.2.1)
 
-Branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release), `v0.1.1`, `v0.2.0` (this work).
-The owner's installed copy was still 0.1.0 on 2026-11-14.
+Branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release), `v0.1.1`, `v0.2.0`. `v0.2.1` is built (see below), not published yet.
+The owner runs the app from `dist\desktop\stage\KLIPZ.exe` (0.2.0, default data folder `%USERPROFILE%\.klipz`):
+never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=dist/desktop/stage-next`.
 
 ## What exists
 
@@ -60,6 +61,53 @@ The owner's installed copy was still 0.1.0 on 2026-11-14.
    Custom API slot. AI captions go through the active engine (`captions.ts::openAiCompatClient`).
 7. **Transcription**: `whisper_threads()` (2/3 of logical CPUs, 4..8; measured 54 s -> 30 s for 93 s of
    speech), `merge_split_words()` joins "l'" + "occupazione" style pieces.
+
+### New in v0.2.1
+1. **Speech model folder** (`whisper_model.py`, `steps/transcribe.py`): the model lives in
+   `<data dir>/models/whisper-<name>/` as real files (adopted from the Hugging Face cache by hard link,
+   else downloaded as plain files, rebuilt when incomplete). Fixes "Unable to open file 'model.bin'" in
+   the running app (the cache's symlink chain was unreadable for that process; cause never found).
+2. **Import speed and honesty**:
+   - The "upload timeout" for videos over ~3 minutes was not the upload (1.5 GB goes through in 8 s in
+     the packaged app's WebView2): the video then sat on "Queued" while shot detection decoded every
+     frame without progress (143 s for 5 min of 4K 60 fps HEVC; 26 s for a 2.7 min AV1 download).
+   - `ffmpeg.quick_scene_cuts`: keyframes only (`-discard nokey` + `scdet`), 1-3 s for those files; full
+     scan (now with live progress) only when keyframes are rarer than one per 8 s. The cuts are coarse
+     (pacing score). Exact cuts are found per clip in `steps/ingest.py::clip_cuts` (used by reframe) and
+     cached in `sources/<id>/cuts.json` (`mode: coarse|full`, `windows`). No file = pre-0.2.1 exact cuts.
+   - `steps/youtube.py::DownloadProgress`: one fraction across picture + sound files, text with MB,
+     speed and time left, then "Joining picture and sound". Download speed itself was already the
+     line's limit (31 MB/s on one connection, 38 with 8 parallel ranges: not worth parallelising).
+   - Quality choice on the import form (`quality` in `POST /api/projects` -> job payload):
+     auto (1080p, 720p over an hour) / 1080 / 720 / 480.
+   - `source-card.tsx`: "Importing" + stage + progress bar instead of "Queued" while the job runs.
+   - Project delete: files removed in the background with retries (`api/projects/[id]/route.ts`);
+     `steps/cleanup.py` sweeps `storage/sources|clips/<id>` folders whose row is gone (older than 1 h).
+3. **Per-piece edits** (`VideoPiece.frame / look / volume`): `crop.ts::pieceCropTrack`,
+   `timeline.ts::pieceLook / pieceVolume`, `splitAt` and `rippleDeleteRange` keep them, ops
+   `setPieceFrame / patchPieceFrame / setPieceLook / setPieceVolume`, `video-panel.tsx` Selected piece,
+   badge in `tracks.tsx`. `MainTrack.tsx` resolves them per piece; `fastrender/graph.py` starts a new
+   chain when the crop window size changes and applies the level per piece (`model.py::piece_*`); a
+   piece with its own look is rendered by Studio.
+
+## How it was verified (v0.2.1)
+
+- `npx vitest run`: 501 passed. Worker `pytest`: 218 passed, 2 skipped (the slow real-Whisper tests were not run this time).
+- Owner's link `https://youtu.be/d7NED6aq7aQ` (2.7 min, Persian): import 11 s (lookup 7 s, download 1 s,
+  ingest 2 s), transcription works from the adopted model folder, AutoClip 4 clips, 3 rendered.
+- Packaged 0.2.0 app driven over the WebView2 debug port (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=
+  --remote-debugging-port=9333`, CDP `DOM.setFileInputFiles`): 404 MB / 7 min and 1.4 GB / 5 min 4K60
+  uploads work; the second showed the 143 s "Queued" stall that 0.2.1 removes.
+- Per-piece crop set in the editor (browser), saved, exported with Studio: piece 1 automatic framing,
+  piece 2 at its own 2.5x crop. Fast-renderer path covered by `test_fastrender.py`.
+
+## Known gaps after v0.2.1
+
+- **Persian / Arabic captions are never drawn by the fast renderer** ("characters not in the caption
+  font"): every such clip takes the ~75 s Studio path. The owner's test video is Persian. Needs a bundled
+  Arabic-script font (e.g. Vazirmatn, OFL), RTL-aware line layout in `fastrender/text.py` / `ass.py`.
+- Transcription of music / long videos is slow on this CPU (120 s for 88 s of sung Persian) and its
+  progress moves in 30 s windows.
 
 ## How it was verified (v0.2.0)
 

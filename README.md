@@ -121,7 +121,7 @@ To back up: close KLIPZ, copy the whole folder (keep `secret.key` with `klipz.db
 
 ### New project
 
-On the **Projects** home page: drop a file (MP4, MOV, MKV or WebM, up to 5 GB; uploaded in chunks) or paste a YouTube URL (imported with yt-dlp, up to 1080p). Only use content you have the rights to. The project page shows import progress, then transcription starts as part of the next step.
+On the **Projects** home page: drop a file (MP4, MOV, MKV or WebM, up to 5 GB; uploaded in chunks) or paste a YouTube URL (imported with yt-dlp; quality Auto / 1080p / 720p / 480p, where Auto is 1080p and 720p for videos over an hour; up to 1080p). Only use content you have the rights to. The project page shows import progress, then transcription starts as part of the next step.
 
 ### Find clips or AutoClip
 
@@ -212,6 +212,8 @@ Views, likes, comments and shares for published posts over 7/30/90 days: totals,
 On the project page, **Keep the speaker centred** (on by default) follows the person who is talking when the video is cropped to 9:16. Turn it off for gameplay, screen recordings or anything where a face is not the point, and choose **Fill the screen** (the middle of the picture) or **Show the whole picture** (nothing cut off, blurred bars). It applies to all clips of that video; clips that were already framed are re-framed.
 
 For a single clip, the editor's **Video → Framing** section switches to a manual crop: zoom from 1x to 4x and move the window left / right and up / down, or show the whole picture. A manual crop replaces the automatic framing for that clip in the preview and in both renderers.
+
+Every piece of a split clip can also have **its own crop, look and volume**: split the video (S), select a piece on the Video track and use **Video → Selected piece** (Crop: same as the clip / own crop, zoom and position / whole picture with blurred bars; Look; Volume). A new piece starts as a copy of the piece it was cut from. Pieces with their own settings are marked on the timeline.
 
 ### AI tab and Smart Edit
 

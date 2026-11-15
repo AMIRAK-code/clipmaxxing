@@ -14,7 +14,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "dist", "desktop");
-const stage = path.join(out, "stage");
+// KLIPZ_STAGE_DIR: stage somewhere else, e.g. while a copy started from dist/desktop/stage is still running
+// (Windows will not delete an .exe that is in use).
+const stage = process.env.KLIPZ_STAGE_DIR ? path.resolve(process.env.KLIPZ_STAGE_DIR) : path.join(out, "stage");
 const appDir = path.join(stage, "app");
 const stageOnly = process.argv.includes("--stage-only");
 const skipWebBuild = process.argv.includes("--skip-web-build");
