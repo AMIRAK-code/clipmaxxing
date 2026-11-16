@@ -1,6 +1,7 @@
-# KLIPZ handoff (updated 2026-11-15, version 0.2.1)
+# KLIPZ handoff (updated 2026-11-16, version 0.2.2)
 
-Branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release), `v0.1.1`, `v0.2.0`. `v0.2.1` is built (see below), not published yet.
+Branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release), `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.2.2`
+(right-to-left captions in the fast renderer, see "New in v0.2.2").
 The owner runs the app from `dist\desktop\stage\KLIPZ.exe` (0.2.0, default data folder `%USERPROFILE%\.klipz`):
 never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=dist/desktop/stage-next`.
 
@@ -91,7 +92,7 @@ never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=d
    chain when the crop window size changes and applies the level per piece (`model.py::piece_*`); a
    piece with its own look is rendered by Studio.
 
-### After v0.2.1 (not released): right-to-left captions
+### New in v0.2.2: right-to-left captions
 Persian / Arabic / Urdu / Kurdish clips are now drawn by the fast renderer, and the Studio renderer orders
 their words correctly (it used to lay Persian words out left to right, in a system font).
 - **Font**: `FALLBACK_FONT` in `packages/shared/src/presets.ts` = Vazirmatn 900 (OFL, `@fontsource/vazirmatn`
@@ -143,7 +144,7 @@ their words correctly (it used to lay Persian words out left to right, in a syst
 
 ## Known gaps after v0.2.1
 
-- Right-to-left captions (see "After v0.2.1"): Hebrew has no bundled font (Studio draws it, in the right
+- Right-to-left captions (see "New in v0.2.2"): Hebrew has no bundled font (Studio draws it, in the right
   order, with a system font). Text overlays (Studio only) get the fallback font but no direction handling.
   A word that starts with Latin letters and ends in Persian ones without a space is drawn right to left
   as a whole. The editor's style thumbnails (`caption-mini.tsx`) do not use the fallback font.

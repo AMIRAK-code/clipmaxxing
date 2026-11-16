@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>KLIPZ</AssemblyName>
     <RootNamespace>Klipz.Desktop</RootNamespace>
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <Product>KLIPZ</Product>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
