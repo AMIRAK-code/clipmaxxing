@@ -12,6 +12,14 @@ export type MontageSettings = z.infer<typeof MontageSettings>;
 
 export const MONTAGE_DEFAULTS: MontageSettings = { count: 3, minSec: 10, maxSec: 20 };
 
+/** The number typed in a settings box, within [lo, hi]; `fallback` when the box holds no number. */
+export function fieldNumber(text: string, lo: number, hi: number, fallback: number, integer = false): number {
+  const n = Number(text);
+  if (text.trim() === "" || !Number.isFinite(n)) return fallback;
+  const v = Math.min(hi, Math.max(lo, n));
+  return integer ? Math.round(v) : v;
+}
+
 /** The pool scene a piece was taken from (pieces start inside their scene). */
 export function sceneOfPiece(scenes: readonly MontageScene[], piece: Pick<VideoPiece, "srcStart">): MontageScene | undefined {
   const t = piece.srcStart + 0.01;
