@@ -13,6 +13,7 @@ import pytest
 from klipz_worker import ffmpeg as ff
 from klipz_worker.runner import JobCancelled
 from klipz_worker.steps import score as sc
+from klipz_worker.steps import transcribe as transcribe_mod
 from klipz_worker.steps.transcribe import FasterWhisperTranscriber
 
 # Stands in for ffmpeg: prints a stats line ("time=...") every 50 ms until killed, or goes silent.
@@ -133,6 +134,8 @@ def test_ai_scoring_keeps_going_after_a_single_failed_batch() -> None:
 
 def test_cancelled_transcription_is_not_restarted_on_the_cpu(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     tr = FasterWhisperTranscriber("small", device="auto")
+    # CUDA is only tried where it can work (and not after an earlier failure): make it the first attempt here
+    monkeypatch.setattr(transcribe_mod, "cuda_usable", lambda: True)
     monkeypatch.setattr(ff, "decode_mono_16k", lambda _p: np.ones(16000, dtype=np.float32))
     loads: list[str] = []
     monkeypatch.setattr(tr, "_load", lambda device, ctype: loads.append(device) or object())
