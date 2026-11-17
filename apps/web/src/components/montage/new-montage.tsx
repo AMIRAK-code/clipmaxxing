@@ -11,6 +11,12 @@ import { api, cn, formatBytes } from "@/lib/utils";
 
 const [MIN_INPUTS, MAX_INPUTS] = MONTAGE_LIMITS.inputs;
 
+/** The number typed in a field, within [lo, hi]; `fallback` when it is not a number. */
+function clampInt(text: string, lo: number, hi: number, fallback: number): number {
+  const n = Math.round(Number(text));
+  return Number.isFinite(n) && text.trim() !== "" ? Math.min(hi, Math.max(lo, n)) : fallback;
+}
+
 /** Several videos in, N short montages out: choose files, how many montages, and how long each is. */
 export function NewMontage() {
   const router = useRouter();
@@ -18,9 +24,14 @@ export function NewMontage() {
   const [files, setFiles] = useState<File[]>([]);
   const [drag, setDrag] = useState(false);
   const [title, setTitle] = useState("");
-  const [count, setCount] = useState(MONTAGE_DEFAULTS.count);
-  const [minSec, setMinSec] = useState(MONTAGE_DEFAULTS.minSec);
-  const [maxSec, setMaxSec] = useState(MONTAGE_DEFAULTS.maxSec);
+  // kept as typed and clamped when the field is left (or on create): clamping on every keystroke turns
+  // typing "14" into "5" (the minimum) after the first digit
+  const [countText, setCountText] = useState(String(MONTAGE_DEFAULTS.count));
+  const [minText, setMinText] = useState(String(MONTAGE_DEFAULTS.minSec));
+  const [maxText, setMaxText] = useState(String(MONTAGE_DEFAULTS.maxSec));
+  const count = clampInt(countText, MONTAGE_LIMITS.count[0], MONTAGE_LIMITS.count[1], MONTAGE_DEFAULTS.count);
+  const minSec = clampInt(minText, MONTAGE_LIMITS.sec[0], MONTAGE_LIMITS.sec[1], MONTAGE_DEFAULTS.minSec);
+  const maxSec = clampInt(maxText, MONTAGE_LIMITS.sec[0], MONTAGE_LIMITS.sec[1], MONTAGE_DEFAULTS.maxSec);
   const [progress, setProgress] = useState<{ index: number; fraction: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = progress !== null;
@@ -137,21 +148,22 @@ export function NewMontage() {
             type="number"
             min={MONTAGE_LIMITS.count[0]}
             max={MONTAGE_LIMITS.count[1]}
-            value={count}
+            value={countText}
             disabled={busy}
             aria-label="Number of montages"
-            onChange={(e) => setCount(Math.min(MONTAGE_LIMITS.count[1], Math.max(MONTAGE_LIMITS.count[0], Number(e.target.value) || 1)))}
+            onChange={(e) => setCountText(e.target.value)}
+            onBlur={() => setCountText(String(count))}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs text-muted">
           Shortest (seconds)
-          <Input type="number" min={MONTAGE_LIMITS.sec[0]} max={MONTAGE_LIMITS.sec[1]} value={minSec} disabled={busy} aria-label="Shortest montage in seconds"
-            onChange={(e) => setMinSec(Math.min(MONTAGE_LIMITS.sec[1], Math.max(MONTAGE_LIMITS.sec[0], Number(e.target.value) || MONTAGE_LIMITS.sec[0])))} />
+          <Input type="number" min={MONTAGE_LIMITS.sec[0]} max={MONTAGE_LIMITS.sec[1]} value={minText} disabled={busy} aria-label="Shortest montage in seconds"
+            onChange={(e) => setMinText(e.target.value)} onBlur={() => setMinText(String(minSec))} />
         </label>
         <label className="flex flex-col gap-1 text-xs text-muted">
           Longest (seconds)
-          <Input type="number" min={MONTAGE_LIMITS.sec[0]} max={MONTAGE_LIMITS.sec[1]} value={maxSec} disabled={busy} aria-label="Longest montage in seconds"
-            onChange={(e) => setMaxSec(Math.min(MONTAGE_LIMITS.sec[1], Math.max(MONTAGE_LIMITS.sec[0], Number(e.target.value) || MONTAGE_LIMITS.sec[1])))} />
+          <Input type="number" min={MONTAGE_LIMITS.sec[0]} max={MONTAGE_LIMITS.sec[1]} value={maxText} disabled={busy} aria-label="Longest montage in seconds"
+            onChange={(e) => setMaxText(e.target.value)} onBlur={() => setMaxText(String(maxSec))} />
         </label>
       </div>
 
