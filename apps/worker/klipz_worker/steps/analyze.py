@@ -5,6 +5,7 @@ import logging
 from typing import Any, Optional
 
 from ..runner import JobContext, PermanentError
+from . import bounds
 from . import segment as seg
 from .ingest import ingest
 from . import smart_edit
@@ -18,6 +19,7 @@ DEFAULT_MAX_CLIPS = 8  # kept for callers that pass an explicit number
 KEPT_OVERLAP = 0.5
 MIN_AUTO_CLIPS, MAX_AUTO_CLIPS = 10, 50
 ALT_OVERLAP = 0.34     # second pass: clips may share up to a third with one already picked
+SELECT_OVERLAP = 0.10  # select_top()'s default: distinct clips share at most a tenth
 
 
 def auto_clip_count(duration: float) -> int:
@@ -84,6 +86,7 @@ def analyze(
         # distinct moments first; then alternative cuts that share at most a third with a picked one
         chosen += select_top([s for s in pool if s not in chosen], max_clips - len(chosen), ALT_OVERLAP, taken=chosen)
         chosen.sort(key=lambda s: -s.score)
+    refine_edges(chosen, sentences, duration, protected)
 
     # Edits are built before the write transaction: reading the audio for each clip must not hold the lock.
     audio_path = ctx.settings.storage_path(source["audio_key"]) if source.get("audio_key") else None
@@ -126,6 +129,24 @@ def analyze(
     ctx.progress(1.0, f"Found {len(ids)} clips", force=True)
     return {"source_video_id": source_video_id, "clips_created": len(ids), "clip_ids": ids,
             "candidates": len(cands), "scorer": sc.name, "smart_edit": bool(ctx.settings.smart_edit)}
+
+
+def refine_edges(chosen: list[ScoredCandidate], sentences: list[seg.Sentence], duration: float,
+                 protected: list[dict[str, Any]]) -> None:
+    """Give each chosen clip its context and a finished ending (bounds.refine_bounds), in place. A clip
+    keeps its edges when the new ones would overlap another clip more than the selection allowed."""
+    for s in chosen:
+        r = bounds.refine_bounds(s.start, s.end, sentences, duration)
+        if not r.changed:
+            continue
+        ok = all(
+            overlap_fraction(r.start, r.end, o.start, o.end) <= max(SELECT_OVERLAP, overlap_fraction(s.start, s.end, o.start, o.end))
+            for o in chosen if o is not s
+        ) and all(overlap_fraction(r.start, r.end, p["start_sec"], p["end_sec"]) <= KEPT_OVERLAP for p in protected)
+        if not ok:
+            continue
+        s.cand = seg.Candidate(r.start, r.end, r.sentences or s.cand.sentences, before=s.cand.before)
+        s.breakdown = {**s.breakdown, "edges": r.reasons}
 
 
 def handle_analyze(ctx: JobContext) -> dict[str, Any]:

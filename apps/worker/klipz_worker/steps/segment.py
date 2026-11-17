@@ -34,6 +34,8 @@ class Candidate:
     start: float
     end: float
     sentences: list[Sentence] = field(repr=False)
+    # the sentence said just before the window (context for an AI scorer: what "it" / "that" refers to)
+    before: str = field(default="", repr=False)
 
     @property
     def duration(self) -> float:
@@ -161,6 +163,8 @@ def generate_candidates(
             if (i, j) in seen:
                 continue
             c = _make(sentences[i : j + 1], duration, max_len)
+            if i > 0:
+                c.before = sentences[i - 1].text
             near = any(
                 (ci == i and abs(other.end - c.end) < 2.0) or (cj == j and abs(other.start - c.start) < 2.0)
                 for ci, cj, other in cands

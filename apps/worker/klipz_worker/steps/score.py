@@ -185,7 +185,9 @@ def validate_ratings(raw: Any, cands: Sequence[Candidate], scorer: str) -> dict[
 def build_prompt(cands: Sequence[Candidate]) -> str:
     parts = []
     for i, c in enumerate(cands):
-        parts.append(f"### Candidate {i} ({c.start:.1f}s - {c.end:.1f}s, {c.duration:.0f}s)\n{c.timestamped_text()}")
+        # what was said just before (not part of the clip) tells whether the clip makes sense on its own
+        before = f"[before, not in the clip] {c.before}\n" if getattr(c, "before", "") else ""
+        parts.append(f"### Candidate {i} ({c.start:.1f}s - {c.end:.1f}s, {c.duration:.0f}s)\n{before}{c.timestamped_text()}")
     return "\n\n".join(parts) + f"\n\nReturn ratings for ids 0..{len(cands) - 1}."
 
 
