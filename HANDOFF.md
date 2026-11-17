@@ -203,6 +203,31 @@ Several uploaded videos -> their exciting scenes -> N short videos in random ord
   clip); montage scenes are found without an AI model (the AI scorer is not used); no thumbnails in the
   Scenes tab; the installer was not rebuilt.
 
+### New after v0.2.2: Manual AI Mode (not released yet)
+Engine choice after import, then "export for Gemini, paste its JSON back".
+- `projects.options.engine` (`builtin` | `manual`, absent = not asked yet). `engine-choice.tsx` (modal) shows
+  on the project page when the video(s) are in, there are no clips and nothing is running; PATCH
+  `/api/projects/[id]` `{engine}` records it. The Montage form no longer starts the job itself: the modal's
+  built-in answer does.
+- Worker `steps/manual_ai.py`: job `manual_export` writes `storage/projects/<id>/manual/`:
+  `video_transcript.txt` (lines of at most 10 s, seconds, one block per video numbered like the JSON's
+  `video`), `video_light.mp4` (`scale=-2:360,fps=1`, CRF 32, AAC 64k; `_N` per video), `gemini_prompt.txt`.
+  Job `manual_clips` takes the parsed plan: segments snapped out of words (`montage._word_edges`), touching
+  ones joined; one-video projects get clips of the original source (pieces = segments, captions on, hook
+  `text_on_screen` for 4 s, progress bar, `auto: false`), reframed and rendered one by one; montage projects
+  cut every segment once into a pool (the montage pipeline, shared crop track, centre crop for off-shape).
+- Web: `lib/gemini-plan.ts` (`parsePlan`: code fences / text around the JSON, bare arrays, other key names,
+  `h:mm:ss,ms` times, video by number / file name / `video_light_2`, clamps to the video, warnings),
+  `POST /api/projects/[id]/manual` (`export` | `open` = Explorer), `GET` (file list), `POST .../manual/clips`
+  (`{json}` -> 400 with the reason, or the job + warnings). `manual-panel.tsx`: progress, files with Download,
+  Open folder, Copy prompt, the paste box, Generate. A clip joined from several segments shows its segment
+  count and real length, previews its render and has no trim (trim would drop the segments).
+- Verified in an isolated data folder through the UI: upload -> modal -> Manual AI Mode -> 40 s video gave a
+  560 KB proxy (480x360, 1 fps, AAC 65 kb/s) -> pasted a fenced 2-clip JSON -> 3 segments joined into 11.7 s
+  at 1080x1920 by the fast renderer, hook for exactly 4 s, Persian captions.
+- Tests: `apps/worker/tests/test_manual_ai.py`, `apps/web/src/lib/gemini-plan.test.ts`,
+  `apps/web/src/server/manual-ai.test.ts`. Not done: talking to Gemini from the app (by design manual).
+
 ## How it was verified (v0.2.1)
 
 - `npx vitest run`: 501 passed. Worker `pytest`: 218 passed, 2 skipped (the slow real-Whisper tests were not run this time).

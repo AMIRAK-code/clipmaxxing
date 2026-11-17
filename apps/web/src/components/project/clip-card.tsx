@@ -45,7 +45,7 @@ export function ClipCard({
   montage = false,
 }: {
   clip: Clip;
-  /** a montage: its length is its scenes', not the pool range it spans */
+  /** a montage, or a clip joined from several segments: its length is its pieces', not the range they span */
   montage?: boolean;
   /** newest render of this clip, if any */
   render?: Render;
@@ -97,7 +97,8 @@ export function ClipCard({
         <p className="text-xs tabular-nums text-muted">
           {montage && clip.edit_state ? (
             <>
-              {clip.edit_state.video.length} scene{clip.edit_state.video.length === 1 ? "" : "s"} ·{" "}
+              {clip.edit_state.video.length} {clip.title?.startsWith("Montage") ? "scene" : "segment"}
+              {clip.edit_state.video.length === 1 ? "" : "s"} ·{" "}
               {Math.round(totalDuration(clip.edit_state.video))} s
             </>
           ) : (

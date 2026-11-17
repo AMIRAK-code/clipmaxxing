@@ -11,6 +11,8 @@ import { actionBlockReason, filterClips, latestJob, rankClips, type ClipFilter }
 import { api, cn, fileUrl } from "@/lib/utils";
 import { ClipCard } from "./clip-card";
 import { ClipPreview } from "./clip-preview";
+import { EngineChoice, type EngineChoiceValue } from "./engine-choice";
+import { ManualPanel } from "./manual-panel";
 import { MontagePanel } from "./montage-panel";
 import { ProjectHeader } from "./project-header";
 import { importJob, SourceCard } from "./source-card";
@@ -66,6 +68,32 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
 
   const { jobs, workerAlive } = useJobs(projectId, initial.jobs, () => void refetch());
   const offline = (workerAlive ?? initialWorkerAlive) === false;
+
+  // Which engine picks the clips: asked once, when the video(s) are in and nothing has been made yet.
+  const engine = project.options?.engine;
+  const [engineBusy, setEngineBusy] = useState<EngineChoiceValue | null>(null);
+  const videosReady = montage ? inputs.length > 0 && !inputs.some((s) => s.status === "uploading") : source?.status === "ready";
+  const working = jobs.some((j) => ["analyze", "autoclip", "montage", "manual_export", "manual_clips"].includes(j.type) && (j.status === "queued" || j.status === "running"));
+  const askEngine = !engine && clips.length === 0 && videosReady && !working;
+
+  async function chooseEngine(v: EngineChoiceValue) {
+    setEngineBusy(v);
+    setError(null);
+    try {
+      if (v === "manual") {
+        // switches the project to Manual AI Mode and starts the transcript + light copy
+        await api(`/api/projects/${projectId}/manual`, { method: "POST", json: { action: "export" } });
+      } else {
+        await api(`/api/projects/${projectId}`, { method: "PATCH", json: { engine: "builtin" } });
+        if (montage) await api(`/api/montages/${projectId}`, { method: "POST", json: {} });
+      }
+      await refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start");
+    } finally {
+      setEngineBusy(null);
+    }
+  }
 
   const ranked = useMemo(() => rankClips(clips), [clips]);
   const rankOf = useMemo(() => new Map(ranked.map((c, i) => [c.id, i + 1])), [ranked]);
@@ -182,9 +210,24 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
         </div>
       ) : null}
 
-      {montage ? <MontagePanel project={project} inputs={inputs} jobs={jobs} onChange={() => void refetch()} /> : null}
+      <EngineChoice open={askEngine} busy={engineBusy} onChoose={(v) => void chooseEngine(v)} />
+      {engine === "manual" ? (
+        <ManualPanel
+          projectId={projectId}
+          jobs={jobs}
+          onChange={() => void refetch()}
+          onUseBuiltin={() => void api(`/api/projects/${projectId}`, { method: "PATCH", json: { engine: "builtin" } }).then(refetch)}
+        />
+      ) : montage ? (
+        <MontagePanel project={project} inputs={inputs} jobs={jobs} onChange={() => void refetch()} />
+      ) : null}
+      {error && (montage || engine === "manual") ? (
+        <p role="alert" className="text-xs text-bad">
+          {error}
+        </p>
+      ) : null}
 
-      <div className={cn("grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]", montage && "hidden")}>
+      <div className={cn("grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]", (montage || engine === "manual") && "hidden")}>
         <SourceCard source={source} job={importJob(jobs)} />
         <Card className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-start gap-3">
@@ -297,7 +340,11 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
           </div>
 
           {clips.length === 0 ? (
-            montage ? (
+            engine === "manual" ? (
+              <EmptyState title="No clips yet" icon={<Scissors className="h-8 w-8" />}>
+                Give the files above to Gemini, paste its JSON answer and press “Generate Clips from JSON”.
+              </EmptyState>
+            ) : montage ? (
               <EmptyState title="No montages yet" icon={<Scissors className="h-8 w-8" />}>
                 Add your videos, choose how many montages and how long, then press “Make montages”.
               </EmptyState>
@@ -326,7 +373,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
             <>
               {visible.length === 0 ? <p className="rounded-lg border border-dashed border-line p-4 text-center text-sm text-muted">No clips match this filter.</p> : null}
               {visible.map((c) => (
-                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} montage={montage} />
+                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} montage={montage || isPieced(c)} />
               ))}
               {discarded.length > 0 ? (
                 <div className="mt-2">
@@ -341,7 +388,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
                   {showDiscarded ? (
                     <div className="mt-2 flex flex-col gap-3">
                       {discarded.map((c) => (
-                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} montage={montage} />
+                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} montage={montage || isPieced(c)} />
                       ))}
                     </div>
                   ) : null}
@@ -355,12 +402,12 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
           {selected ? (
             <>
               <h2 className="truncate text-sm font-bold">{selected.title || "Untitled clip"}</h2>
-              {montage ? (
+              {montage || isPieced(selected) ? (
                 <MontagePreview url={renders[selected.id]?.status === "ready" ? fileUrl(renders[selected.id]!.storage_key) : null} clipId={selected.id} />
               ) : (
                 <ClipPreview clip={selected} source={source} words={words} />
               )}
-              {source?.status === "ready" && !montage ? (
+              {source?.status === "ready" && !montage && !isPieced(selected) ? (
                 <TrimControl
                   key={selected.id}
                   start={selected.start_sec}
@@ -378,6 +425,12 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
       </div>
     </div>
   );
+}
+
+/** A clip joined from segments of the video (Manual AI Mode): its range is not what plays, and trimming
+ * the range would throw the segments away, so it is previewed and edited like a montage. */
+function isPieced(c: Clip): boolean {
+  return c.edit_state?.auto === false && (c.edit_state.video?.length ?? 0) > 1;
 }
 
 /** A montage jumps between scenes, so the page shows its export (the editor previews edits live). */

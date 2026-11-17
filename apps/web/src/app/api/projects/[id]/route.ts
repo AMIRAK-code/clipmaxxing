@@ -21,9 +21,16 @@ export const GET = route<{ id: string }>((_req, { id }) => {
   });
 });
 
+const Patch = z
+  .object({ title: z.string().min(1).max(160).optional(), engine: z.enum(["builtin", "manual"]).optional() })
+  .refine((p) => p.title !== undefined || p.engine !== undefined, "Nothing to change");
+
+/** Rename a project, or record which engine picks its clips (the choice asked after import). */
 export const PATCH = route<{ id: string }>(async (req, { id }) => {
-  const patch = await body(req, z.object({ title: z.string().min(1).max(160) }));
-  if (!update("projects", id, patch, ["title"])) notFound();
+  const patch = await body(req, Patch);
+  const project = getProject(id) ?? notFound();
+  if (patch.title !== undefined) update("projects", id, { title: patch.title }, ["title"]);
+  if (patch.engine !== undefined) run("update projects set options = ? where id = ?", JSON.stringify({ ...project.options, engine: patch.engine }), id);
   return ok({ project: getProject(id) });
 });
 

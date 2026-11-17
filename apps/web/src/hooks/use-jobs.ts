@@ -56,4 +56,7 @@ export const JOB_LABEL: Record<string, string> = {
   autoclip: "AutoClip",
   voiceover: "Generating voiceover",
   cleanup: "Cleaning up",
+  montage: "Making montages",
+  manual_export: "Preparing files for Gemini",
+  manual_clips: "Making clips from the JSON",
 };

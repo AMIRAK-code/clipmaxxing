@@ -128,6 +128,15 @@ On the **Projects** home page: drop a file (MP4, MOV, MKV or WebM, up to 5 GB; u
 - **Find clips**: transcribes (if needed), splits the video into candidate windows, scores them, picks the best non-overlapping ones and reframes each to 9:16. You then review them.
 - **AutoClip**: does the same, then also adds captions and renders the top clips in one go, ready to post.
 
+### Built-in engine or Manual AI Mode
+
+When a video (or a montage's videos) has finished importing, KLIPZ asks how the clips should be picked:
+
+- **Use Built-in Engine**: KLIPZ finds the moments itself (Find clips / AutoClip, or the montage job).
+- **Manual AI Mode (Export for Gemini & Paste JSON)**: KLIPZ transcribes the video with its local Whisper and prepares three files: `video_transcript.txt` (one line per sentence with start and end times in seconds; one block per video), `video_light.mp4` (a tiny 360p, 1 frame per second copy, CRF 32, AAC 64k; `video_light_1.mp4`, `video_light_2.mp4` ... for several videos) and `gemini_prompt.txt` (what to ask, with the exact JSON shape). **Open folder**, **Download** or **Copy prompt**, give them to Gemini, then paste its whole answer into **Paste Gemini JSON Output Here** and press **Generate Clips from JSON**.
+
+  Each clip in the JSON lists `segments` (start / end in seconds, or `"1:12.4"`; with several videos also `"video": 2`) and a `text_on_screen` hook. KLIPZ cuts the segments from the original full-quality video (never the light copy), joins them so whatever lies between them is gone, moves cut points out of the middle of words, crops to 9:16 with speaker tracking, adds captions and shows the hook for the first 4 seconds, then renders. The answer may be wrapped in a code block or surrounded by text; segments that cannot be used are skipped with a note. The clips open in the editor like any other (a montage project's in its Scenes tab). You can switch to the built-in engine at any time.
+
 ### Montage
 
 The **Montage** page mixes several videos into short ones. Drop in your videos (any number, up to 5 GB each), choose **how many videos** to make and their **shortest and longest length** (10 to 20 seconds by default), and press **Make montages**. KLIPZ transcribes every video, picks its moments where something happens (lively or emphatic speech, loud bursts, fast cuts; each scene 1.2 to 4 seconds, never cutting a word in half), and makes each montage from scenes of different videos in a random order, never two scenes of the same video in a row when another one is available and never the same set of scenes twice. The montages are rendered right away.

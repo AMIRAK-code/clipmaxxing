@@ -252,7 +252,9 @@ export type JobType =
   | "autoclip"
   | "voiceover"
   | "cleanup"
-  | "montage";
+  | "montage"
+  | "manual_export"
+  | "manual_clips";
 
 export interface Job {
   id: string;
@@ -275,13 +277,22 @@ export interface Project {
   title: string;
   /** clips = one video cut into clips; montage = several videos mixed into short videos */
   kind: ProjectKind;
-  /** montage: how many videos to make and how long; poolInputs = the inputs the current scene pool was cut from */
-  options: MontageOptions | null;
+  /** montage settings, and which engine picks the clips */
+  options: ProjectOptions | null;
   created_at: string;
   updated_at: string;
 }
 
 export type ProjectKind = "clips" | "montage";
+
+/** builtin = KLIPZ finds the clips; manual = Manual AI Mode (files for Gemini, its JSON pasted back) */
+export type ClipEngine = "builtin" | "manual";
+
+/** Montage: how many videos to make and how long; poolInputs = the inputs the current scene pool was cut
+ * from. engine: the choice made after import (absent = not asked yet). */
+export interface ProjectOptions extends Partial<MontageOptions> {
+  engine?: ClipEngine;
+}
 
 export interface MontageOptions {
   count: number;

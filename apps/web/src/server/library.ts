@@ -269,6 +269,14 @@ function launch(exe: string, args: string[], opts: { verbatim?: boolean; env?: N
   });
 }
 
+/** Show a folder KLIPZ made (never a path from the browser) in Explorer. Windows only. */
+export async function openFolder(p: string): Promise<void> {
+  if (process.platform !== "win32") throw new HttpError(501, "Only available in the Windows app");
+  if (p.includes('"')) throw new HttpError(400, "Unexpected path");
+  if (!p.startsWith(storageDir() + path.sep) && !p.startsWith(dataDir() + path.sep)) throw new HttpError(400, "Unexpected path");
+  await launch("explorer.exe", [p]);
+}
+
 /** Run a desktop action on a library file or folder. Windows only (the desktop app). */
 export async function runLibraryAction(action: LibraryAction, target: LibraryTarget): Promise<{ path: string }> {
   if (process.platform !== "win32") throw new HttpError(501, "Only available in the Windows app");

@@ -14,7 +14,11 @@ const ACTIVE = new Set(["queued", "running"]);
 
 /** A montage project's videos and the "make montages" controls (instead of Find clips / AutoClip). */
 export function MontagePanel({ project, inputs, jobs, onChange }: { project: Project; inputs: SourceVideo[]; jobs: Job[]; onChange: () => void }) {
-  const opts: MontageOptions = project.options ?? MONTAGE_DEFAULTS;
+  const opts: MontageOptions = {
+    count: project.options?.count ?? MONTAGE_DEFAULTS.count,
+    minSec: project.options?.minSec ?? MONTAGE_DEFAULTS.minSec,
+    maxSec: project.options?.maxSec ?? MONTAGE_DEFAULTS.maxSec,
+  };
   const [settings, setSettings] = useState({ count: opts.count, minSec: opts.minSec, maxSec: opts.maxSec });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

@@ -50,7 +50,7 @@ export function NewMontage() {
       for (const [index, f] of files.entries()) {
         await uploadFile(f, (fraction) => setProgress({ index, fraction }), project.id);
       }
-      await api(`/api/montages/${project.id}`, { method: "POST", json: settings });
+      // the project page asks: built-in engine (starts the montage job) or Manual AI Mode
       router.push(`/projects/${project.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start the montage");

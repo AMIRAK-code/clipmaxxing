@@ -13,10 +13,10 @@ export const POST = route<{ id: string }>(async (req, { id }) => {
   const inputs = montageInputs(id);
   if (inputs.some((s) => s.status === "uploading")) throw new HttpError(409, "Wait for the uploads to finish");
   if (!inputs.some((s) => s.status !== "failed")) throw new HttpError(400, "Add at least one video first");
-  const opts = project.options ?? { count: 3, minSec: 10, maxSec: 20 };
-  const count = input.count ?? opts.count;
-  const minSec = input.minSec ?? opts.minSec;
-  const maxSec = Math.max(minSec, input.maxSec ?? opts.maxSec);
+  const opts = project.options ?? {};
+  const count = input.count ?? opts.count ?? 3;
+  const minSec = input.minSec ?? opts.minSec ?? 10;
+  const maxSec = Math.max(minSec, input.maxSec ?? opts.maxSec ?? 20);
   const job = enqueueJob("montage", { project_id: id, count, minSec, maxSec }, { projectId: id, dedupeKey: `montage:${id}` });
   return ok({ job });
 });
