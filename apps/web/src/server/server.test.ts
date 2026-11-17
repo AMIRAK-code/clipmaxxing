@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "klipz-web-test-"));
 process.env.KLIPZ_DATA_DIR = tmp;
@@ -205,6 +205,22 @@ describe("applyClipPatch", () => {
     expect(fs.existsSync(dir)).toBe(false);
     expect(getClip(clipId)).toBeUndefined();
     expect(deleteClip(clipId)).toBe(false);
+  });
+
+  it("deleteClip also removes the clip's rendered videos (renders/<id>), not other clips' renders", async () => {
+    const { clipId } = seed();
+    const other = seed();
+    const mine = newId();
+    const theirs = newId();
+    run("insert into renders (id, clip_id, status) values (?, ?, 'ready')", mine, clipId);
+    run("insert into renders (id, clip_id, status) values (?, ?, 'ready')", theirs, other.clipId);
+    for (const id of [mine, theirs]) {
+      fs.mkdirSync(storagePath(`renders/${id}`), { recursive: true });
+      fs.writeFileSync(storagePath(`renders/${id}/clip.mp4`), "x");
+    }
+    expect(deleteClip(clipId)).toBe(true);
+    await vi.waitFor(() => expect(fs.existsSync(storagePath(`renders/${mine}`))).toBe(false));
+    expect(fs.existsSync(storagePath(`renders/${theirs}/clip.mp4`))).toBe(true);
   });
 
   it("deleteClip cancels queued jobs for that clip only", () => {

@@ -15,7 +15,7 @@
  */
 import { z } from 'zod';
 import { composeCaption } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, commitPhase } from '../errors';
 import {
   httpRequest,
   pollOptionsOf,
@@ -445,13 +445,16 @@ export const tiktokPublisher: Publisher = {
 
     let publishId: string | undefined;
     if (usePull) {
-      const data = await tiktokCall(ctx, {
-        method: 'POST',
-        url: initUrl,
-        bearer: tokens.accessToken,
-        headers: JSON_HEADERS,
-        json: { post_info: postInfo, source_info: { source: 'PULL_FROM_URL', video_url: render.url } },
-      });
+      // TikTok fetches the URL and posts on its own: this init request is what creates the post.
+      const data = await commitPhase('creating', () =>
+        tiktokCall(ctx, {
+          method: 'POST',
+          url: initUrl,
+          bearer: tokens.accessToken,
+          headers: JSON_HEADERS,
+          json: { post_info: postInfo, source_info: { source: 'PULL_FROM_URL', video_url: render.url } },
+        }),
+      );
       publishId = str(data.publish_id);
     } else {
       publishId = await withAssetSource(render, ctx, async (source) => {
@@ -471,13 +474,17 @@ export const tiktokPublisher: Publisher = {
         if (!uploadUrl || !id) throw new PublishError('TikTok init did not return an upload_url', { code: 'provider_error', providerPayload: data });
         await uploadInChunks(ctx, source, plan.ranges, async (chunk) => {
           // 206 = more chunks expected, 201 = all received.
-          await httpRequest(ctx, {
-            method: 'PUT',
-            url: uploadUrl,
-            headers: { 'Content-Type': 'video/mp4', 'Content-Range': `bytes ${chunk.start}-${chunk.end}/${chunk.total}` },
-            body: chunk.data,
-            mapError: tiktokError,
-          });
+          const put = () =>
+            httpRequest(ctx, {
+              method: 'PUT',
+              url: uploadUrl,
+              headers: { 'Content-Type': 'video/mp4', 'Content-Range': `bytes ${chunk.start}-${chunk.end}/${chunk.total}` },
+              body: chunk.data,
+              mapError: tiktokError,
+            });
+          // TikTok posts by itself once the last chunk arrives: if its answer is lost, poll instead of re-posting.
+          if (chunk.isLast) await commitPhase('creating', put, id);
+          else await put();
         });
         return id;
       });
@@ -485,23 +492,30 @@ export const tiktokPublisher: Publisher = {
     if (!publishId) throw new PublishError('TikTok init did not return a publish_id', { code: 'provider_error' });
     const id = publishId;
 
-    const polled = await pollUntil(
-      ctx,
+    // The post now exists on TikTok's side: a failing status check must lead to polling, never to a new upload.
+    return commitPhase(
+      'created',
       async () => {
-        const s = await fetchPublishStatus(ctx, tokens, id);
-        return { done: s.status.status !== 'processing', value: s };
+        const polled = await pollUntil(
+          ctx,
+          async () => {
+            const s = await fetchPublishStatus(ctx, tokens, id);
+            return { done: s.status.status !== 'processing', value: s };
+          },
+          pollOptionsOf(ctx, { maxAttempts: 12, intervalMs: 5000 }),
+        );
+        const final = polled.value;
+        if (final.status.status === 'failed') {
+          throw new PublishError(final.status.error ?? 'TikTok publish failed', { code: 'publish_failed', providerPayload: final.raw });
+        }
+        if (final.status.status === 'published') {
+          const url = postUrl(account, final.postId) ?? (creator.creatorUsername ? postUrl({ ...account, username: creator.creatorUsername }, final.postId) : undefined);
+          return { externalId: id, status: 'published' as const, ...(url ? { url } : {}) };
+        }
+        return { externalId: id, status: 'processing' as const };
       },
-      pollOptionsOf(ctx, { maxAttempts: 12, intervalMs: 5000 }),
+      id,
     );
-    const final = polled.value;
-    if (final.status.status === 'failed') {
-      throw new PublishError(final.status.error ?? 'TikTok publish failed', { code: 'publish_failed', providerPayload: final.raw });
-    }
-    if (final.status.status === 'published') {
-      const url = postUrl(account, final.postId) ?? (creator.creatorUsername ? postUrl({ ...account, username: creator.creatorUsername }, final.postId) : undefined);
-      return { externalId: id, status: 'published', ...(url ? { url } : {}) };
-    }
-    return { externalId: id, status: 'processing' };
   },
 
   async getStatus(ctx, { tokens, account, externalId }) {

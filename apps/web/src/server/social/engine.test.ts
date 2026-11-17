@@ -32,6 +32,7 @@ const create = (accountIds: string[], extra: Partial<PostInput> = {}, now = T0) 
 const deps = (pubs: Partial<Record<Provider, Publisher>> = {}, extra: EngineDeps = {}): EngineDeps => ({
   publisherFor: (p) => pubs[p] ?? fakePublisher(p),
   backoff: { baseMs: 60_000, maxMs: 3_600_000, jitter: () => 0 },
+  elapsedMs: () => 0, // timestamps exactly at the tick's `now`
   ...extra,
 });
 
@@ -213,6 +214,25 @@ describe("accounts + tokens", () => {
     await processDuePosts(T0, deps({ x: fakePublisher("x", { refresh }) }));
     expect(refresh).not.toHaveBeenCalled();
   });
+
+  it("refreshes once per account when posts on it run in parallel (X refresh tokens work only once)", async () => {
+    const x = addAccount("x", "x1", { accessToken: "OLD", refreshToken: "R1", expiresAt: at(2 * MIN).toISOString() });
+    create([x.id]);
+    create([x.id], { caption: "Second" });
+    const used = new Set<string>();
+    const refresh = vi.fn(async (_ctx: unknown, t: { refreshToken?: string }) => {
+      await new Promise((r) => setTimeout(r, 20)); // both lanes are inside a refresh at the same time without the lock
+      if (!t.refreshToken || used.has(t.refreshToken)) throw new PublishError("refresh token is invalid or already used", { code: "invalid_grant", needsReconnect: true });
+      used.add(t.refreshToken);
+      return { accessToken: "NEW", refreshToken: "R2", expiresAt: at(2 * 60 * MIN).toISOString(), scopes: ["s"] };
+    });
+    const publish = vi.fn(async () => ({ externalId: `e${publish.mock.calls.length}`, status: "published" as const }));
+    const s = await processDuePosts(T0, deps({ x: fakePublisher("x", { publish, refresh }) }));
+    expect(s.published).toBe(2);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(get<{ status: string }>("select status from social_accounts where id = ?", x.id)!.status).toBe("active");
+    for (const call of publish.mock.calls as unknown as [unknown, { tokens: { accessToken: string } }][]) expect(call[1].tokens.accessToken).toBe("NEW");
+  });
 });
 
 describe("batch independence", () => {
@@ -375,5 +395,111 @@ describe("lock heartbeat", () => {
     expect(lockOf(p!.id)).toBe(lockAfter);
     await processDuePosts(at(LOCK_TTL_MS + MIN), deps({ x: pub }));
     expect(getPost(p!.id)).toMatchObject({ status: "failed", error_code: "uncertain_outcome" });
+  });
+});
+
+describe("never post twice when the platform may already have the post", () => {
+  const committed = (externalId?: string) =>
+    new PublishError("Network error: fetch failed", { code: "network_error", committed: true, ...(externalId ? { externalId } : {}) });
+
+  it("a committed error with a platform id switches to polling and never publishes again", async () => {
+    const tt = addAccount("tiktok");
+    const [p] = create([tt.id]);
+    const publish = vi.fn(async () => Promise.reject(committed("pub-1")));
+    const getStatus = vi.fn(async (_ctx: unknown, _ref: { externalId: string }) => ({ status: "published" as const, url: "https://www.tiktok.com/@k/video/1" }));
+    const pub = fakePublisher("tiktok", { publish, getStatus });
+    const s = await processDuePosts(T0, deps({ tiktok: pub }));
+    expect(s.processing).toBe(1);
+    expect(getPost(p!.id)).toMatchObject({ status: "processing", external_id: "pub-1", error_code: null, next_attempt_at: at(POLL_DELAY_MS).toISOString() });
+    await processDuePosts(at(POLL_DELAY_MS), deps({ tiktok: pub }));
+    expect(getPost(p!.id)).toMatchObject({ status: "published", external_id: "pub-1" });
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(getStatus.mock.calls[0]![1].externalId).toBe("pub-1");
+  });
+
+  it("a committed error without an id ends as uncertain_outcome and is not retried", async () => {
+    const x = addAccount("x");
+    const [p] = create([x.id]);
+    const publish = vi.fn(async () => Promise.reject(committed()));
+    const pub = fakePublisher("x", { publish });
+    await processDuePosts(T0, deps({ x: pub }));
+    const post = getPost(p!.id)!;
+    expect(post).toMatchObject({ status: "failed", error_code: "uncertain_outcome", next_attempt_at: null, locked_at: null });
+    expect(post.error).toMatch(/X was creating the post/);
+    await processDuePosts(at(24 * 60 * MIN), deps({ x: pub }));
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("a committed error while polling keeps polling (with backoff) instead of failing", async () => {
+    const ig = addAccount("instagram");
+    const [p] = create([ig.id]);
+    const getStatus = vi.fn(async () => Promise.reject(committed("container:5")));
+    const pub = fakePublisher("instagram", { publish: async () => ({ externalId: "container:5", status: "processing" }), getStatus });
+    await processDuePosts(T0, deps({ instagram: pub }));
+    const s = await processDuePosts(at(POLL_DELAY_MS), deps({ instagram: pub }));
+    expect(s.retried).toBe(1);
+    expect(getPost(p!.id)).toMatchObject({ status: "processing", external_id: "container:5" });
+  });
+
+  it("posts waiting for a free lane stay unlocked, so a stalled upload cannot get them published twice", async () => {
+    const accounts = ["x", "linkedin", "facebook", "youtube"].map((prov) => addAccount(prov as Provider));
+    const posts = create(accounts.map((a) => a.id));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const calls: string[] = [];
+    const slow = (prov: Provider) =>
+      fakePublisher(prov, {
+        publish: async () => {
+          calls.push(prov);
+          await gate;
+          return { externalId: `id-${prov}`, status: "published" as const };
+        },
+      });
+    const pubs = { x: slow("x"), linkedin: slow("linkedin"), facebook: slow("facebook"), youtube: slow("youtube") };
+    const first = processDuePosts(T0, deps(pubs, { heartbeatMs: 60 * MIN }));
+    await vi.waitFor(() => expect(calls).toHaveLength(3)); // three lanes busy
+    const waiting = posts.find((p) => getPost(p.id)!.status === "queued")!;
+    expect(lockOf(waiting.id)).toBeNull();
+    // A later tick picks the waiting post up; the first tick must then skip it instead of publishing it again.
+    const second = processDuePosts(at(MIN), deps(pubs, { heartbeatMs: 60 * MIN }));
+    await vi.waitFor(() => expect(calls).toHaveLength(4));
+    release();
+    await Promise.all([first, second]);
+    for (const p of posts) expect(getPost(p.id)!.status).toBe("published");
+    expect([...calls].sort()).toEqual(["facebook", "linkedin", "x", "youtube"]);
+  });
+
+  it("never reclaims a post this process is still uploading, even when its heartbeat was late (PC sleep)", async () => {
+    const x = addAccount("x");
+    const [p] = create([x.id]);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const publish = vi.fn(async () => {
+      await gate;
+      return { externalId: "e1", status: "published" as const };
+    });
+    const pub = fakePublisher("x", { publish });
+    const first = processDuePosts(T0, deps({ x: pub }, { heartbeatMs: 60 * MIN })); // no beat during the test
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    const s2 = await processDuePosts(at(LOCK_TTL_MS + 5 * MIN), deps({ x: pub }));
+    expect(s2.reclaimed).toBe(0);
+    expect(getPost(p!.id)!.status).toBe("publishing");
+    release();
+    await first;
+    expect(getPost(p!.id)).toMatchObject({ status: "published", external_id: "e1" });
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules the retry from when a slow upload ended, not from when the tick started", async () => {
+    const x = addAccount("x");
+    const [p] = create([x.id]);
+    let elapsed = 0;
+    const publish = vi.fn(async () => {
+      elapsed = 12 * MIN; // the upload took 12 minutes
+      throw new PublishError("busy", { code: "server_error", retryable: true, status: 503 });
+    });
+    await processDuePosts(T0, deps({ x: fakePublisher("x", { publish }) }, { elapsedMs: () => elapsed }));
+    // backoff for attempt 1 is 30 s (jitter 0, see "retry / backoff"), counted from T0 + 12 min, not from T0
+    expect(getPost(p!.id)).toMatchObject({ status: "queued", next_attempt_at: at(12 * MIN + 30 * SEC).toISOString() });
   });
 });

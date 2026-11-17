@@ -464,13 +464,15 @@ def test_cleanup_sweeps_folders_of_deleted_projects(db, settings, project):
     old_t = time.time() - 2 * 3600
     paths = {}
     for name, key in (("live", f"sources/{live}/source.mp4"), ("orphan", "sources/gone-project/source.mp4"),
-                      ("fresh", "sources/just-deleted/source.mp4"), ("clip", "clips/gone-clip/crop.json")):
+                      ("fresh", "sources/just-deleted/source.mp4"), ("clip", "clips/gone-clip/crop.json"),
+                      ("render", "renders/gone-render/clip.mp4")):
         p = settings.storage_path(key)
         p.write_bytes(b"x" * 50)
         paths[name] = p
         if name != "fresh":
             os.utime(p.parent, (old_t, old_t))
     res = cl.cleanup(ctx_for(db, settings, project, "cleanup"))
-    assert res["orphan_folders_deleted"] == 2 and res["bytes_freed"] >= 100
+    assert res["orphan_folders_deleted"] == 3 and res["bytes_freed"] >= 150
     assert paths["live"].exists() and paths["fresh"].exists()  # known source; and one too recent to judge
     assert not paths["orphan"].parent.exists() and not paths["clip"].parent.exists()
+    assert not paths["render"].parent.exists()  # rendered video of a deleted clip

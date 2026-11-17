@@ -36,6 +36,17 @@ export function storagePath(key: string): string {
   return full;
 }
 
+/**
+ * Remove a storage folder without blocking the request. Windows refuses to delete a file that is still
+ * open (ffmpeg importing it, the page previewing it), so retry for a few seconds; anything still left is
+ * swept by the worker's cleanup job. A failed delete of files must never fail the delete of the row.
+ */
+export function removeStorageDir(key: string): Promise<void> {
+  return fs.promises
+    .rm(storagePath(key), { recursive: true, force: true, maxRetries: 8, retryDelay: 400 })
+    .catch((e: unknown) => console.warn(`[storage] could not remove ${key} yet: ${e instanceof Error ? e.message : String(e)}`));
+}
+
 export function ensureParent(file: string): string {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   return file;
