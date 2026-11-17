@@ -214,6 +214,25 @@ describe("accounts + tokens", () => {
     await processDuePosts(T0, deps({ x: fakePublisher("x", { refresh }) }));
     expect(refresh).not.toHaveBeenCalled();
   });
+
+  it("refreshes once per account when posts on it run in parallel (X refresh tokens work only once)", async () => {
+    const x = addAccount("x", "x1", { accessToken: "OLD", refreshToken: "R1", expiresAt: at(2 * MIN).toISOString() });
+    create([x.id]);
+    create([x.id], { caption: "Second" });
+    const used = new Set<string>();
+    const refresh = vi.fn(async (_ctx: unknown, t: { refreshToken?: string }) => {
+      await new Promise((r) => setTimeout(r, 20)); // both lanes are inside a refresh at the same time without the lock
+      if (!t.refreshToken || used.has(t.refreshToken)) throw new PublishError("refresh token is invalid or already used", { code: "invalid_grant", needsReconnect: true });
+      used.add(t.refreshToken);
+      return { accessToken: "NEW", refreshToken: "R2", expiresAt: at(2 * 60 * MIN).toISOString(), scopes: ["s"] };
+    });
+    const publish = vi.fn(async () => ({ externalId: `e${publish.mock.calls.length}`, status: "published" as const }));
+    const s = await processDuePosts(T0, deps({ x: fakePublisher("x", { publish, refresh }) }));
+    expect(s.published).toBe(2);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(get<{ status: string }>("select status from social_accounts where id = ?", x.id)!.status).toBe("active");
+    for (const call of publish.mock.calls as unknown as [unknown, { tokens: { accessToken: string } }][]) expect(call[1].tokens.accessToken).toBe("NEW");
+  });
 });
 
 describe("batch independence", () => {

@@ -1,10 +1,10 @@
 import type { Post, Provider } from "@klipz/shared";
-import { ensureFreshTokens, isPublishError, type Publisher, type PublisherContext } from "@klipz/publishers";
+import { isPublishError, type Publisher, type PublisherContext } from "@klipz/publishers";
 import { all, get, run } from "../db";
 import { getAccount } from "../repo";
 import { accountInfoOf, markNeedsReconnect } from "./accounts";
 import { contextFor, getPublisherFor } from "./publishers";
-import { loadTokens, saveTokens } from "./vault";
+import { freshTokens } from "./vault";
 
 export const METRICS_WINDOW_DAYS = 90;
 
@@ -48,11 +48,10 @@ export async function pullMetrics(now: Date = new Date(), deps: MetricsDeps = {}
     try {
       const publisher = (deps.publisherFor ?? ((p: Provider) => getPublisherFor(p)))(post.provider);
       const ctx = (deps.ctxFor ?? ((p: Provider, c: () => Date) => contextFor(p, c)))(post.provider, () => now);
-      const stored = loadTokens(account.id);
-      if (!stored) throw new Error("no stored credentials");
-      const fresh = await ensureFreshTokens(publisher, ctx, stored);
-      if (fresh.refreshed) saveTokens(account.id, fresh.tokens);
-      const m = await publisher.fetchMetrics(ctx, { tokens: fresh.tokens, account: accountInfoOf(account), externalId: post.external_id! });
+      // Same per-account lock as the publish engine: the hourly pull may run while a post refreshes.
+      const tokens = await freshTokens(account.id, publisher, ctx);
+      if (!tokens) throw new Error("no stored credentials");
+      const m = await publisher.fetchMetrics(ctx, { tokens, account: accountInfoOf(account), externalId: post.external_id! });
       run(
         `insert into post_metrics (post_id, captured_on, views, likes, comments, shares, saves, impressions, watch_time_sec, raw)
          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
