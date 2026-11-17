@@ -5,7 +5,7 @@ import { Check, Download, Pencil, RotateCcw, Send, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/primitives";
-import { BREAKDOWN_KEYS, clampScore, scoreTone, scorerLabel } from "@/lib/clip-ui";
+import { BREAKDOWN_KEYS, breakdownValue, clampScore, scoreTone, scorerLabel } from "@/lib/clip-ui";
 import { cn, fileUrl, formatDuration } from "@/lib/utils";
 
 const TONE_TEXT = { good: "text-good", warn: "text-warn", bad: "text-bad" } as const;
@@ -18,7 +18,7 @@ function Breakdown({ clip }: { clip: Clip }) {
     <div className="flex flex-col gap-1">
       <div className="grid grid-cols-5 gap-2">
         {BREAKDOWN_KEYS.map((k) => {
-          const v = clampScore(b[k]);
+          const v = clampScore(breakdownValue(b, k));
           return (
             <div key={k} className="min-w-0" title={`${k}: ${v}`}>
               <div className="h-1 overflow-hidden rounded-full bg-panel-2" role="img" aria-label={`${k} ${v} out of 100`}>
@@ -41,6 +41,7 @@ export function ClipCard({
   selected,
   onSelect,
   onStatus,
+  onExport,
 }: {
   clip: Clip;
   /** newest render of this clip, if any */
@@ -49,6 +50,8 @@ export function ClipCard({
   selected: boolean;
   onSelect: () => void;
   onStatus: (status: Clip["status"]) => void;
+  /** render this clip now (candidates AutoClip did not render, or after an edit) */
+  onExport?: () => void;
 }) {
   const score = clampScore(clip.score);
   const tone = scoreTone(clip.score);
@@ -109,9 +112,14 @@ export function ClipCard({
             </>
           )}
           {render ? <RenderBadge render={render} clip={clip} /> : null}
+          {onExport && !discarded && (!render || render.status === "failed" || (render.status === "ready" && render.edit_version != null && render.edit_version !== clip.edit_version)) ? (
+            <Button size="sm" variant="secondary" className={cn(!render && "ml-auto")} onClick={onExport} data-testid="clip-export" title="Render this clip as a 1080×1920 MP4">
+              <Download className="h-3.5 w-3.5" aria-hidden /> {render ? "Export again" : "Export"}
+            </Button>
+          ) : null}
           <Link
             href={`/clips/${clip.id}`}
-            className={cn("inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-semibold hover:bg-panel-2", !render && "ml-auto")}
+            className={cn("inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-semibold hover:bg-panel-2", !render && !onExport && "ml-auto")}
           >
             <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit
           </Link>

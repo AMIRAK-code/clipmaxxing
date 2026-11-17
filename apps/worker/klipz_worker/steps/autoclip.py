@@ -11,7 +11,8 @@ from .render import render_fingerprint
 
 log = logging.getLogger("klipz.autoclip")
 
-DEFAULT_MAX_CLIPS = 5
+DEFAULT_MAX_CLIPS = 5        # kept for callers that pass an explicit number
+DEFAULT_RENDER_CLIPS = 10    # AutoClip renders this many of the best clips; the rest stay as candidates
 LIVE = ("queued", "rendering", "ready")
 
 
@@ -46,23 +47,28 @@ def _current_render(db: Any, clip: dict[str, Any], *, style_changed: bool = Fals
     return None
 
 
-def autoclip(ctx: JobContext, source_video_id: str, max_clips: int = DEFAULT_MAX_CLIPS, style_id: Optional[str] = None) -> dict[str, Any]:
+def autoclip(ctx: JobContext, source_video_id: str, max_clips: Optional[int] = None, style_id: Optional[str] = None,
+             render_clips: int = DEFAULT_RENDER_CLIPS) -> dict[str, Any]:
+    """Find the potential clips (`max_clips`, or as many as the video's length suggests), then reframe and
+    render the `render_clips` best ones. The others stay on the project page as candidates: one click
+    exports any of them."""
     db = ctx.db
     source = db.get("source_videos", source_video_id)
     if source is None:
         raise PermanentError("source video not found")
 
     res = analyze(ctx.sub(0.0, 0.6), source_video_id, max_clips)
-    clip_ids: list[str] = list(res.get("clip_ids") or [])
-    if not clip_ids:  # re-run after a successful analyze: reuse the clips it created
+    found: list[str] = list(res.get("clip_ids") or [])
+    if not found:  # re-run after a successful analyze: reuse the clips it created
         rows = db.many(
             "clips",
-            "select id from clips where source_video_id = ? and status != 'discarded' order by score desc, start_sec limit ?",
-            source_video_id, max_clips,
+            "select id from clips where source_video_id = ? and status != 'discarded' order by score desc, start_sec",
+            source_video_id,
         )
-        clip_ids = [r["id"] for r in rows]
-    if not clip_ids:
+        found = [r["id"] for r in rows]
+    if not found:
         raise PermanentError("no clips to render")
+    clip_ids = found[: max(1, render_clips)]  # best first (analyze returns them by score)
 
     render_ids: list[str] = []
     n = len(clip_ids)
@@ -88,19 +94,25 @@ def autoclip(ctx: JobContext, source_video_id: str, max_clips: int = DEFAULT_MAX
                 "render", {"render_id": rid}, project_id=source["project_id"],
                 dedupe_key=f"render:{rid}", parent_job_id=ctx.job["id"],
             )
-    ctx.progress(1.0, f"Queued {len(render_ids)} renders", force=True)
-    return {"clip_ids": clip_ids, "render_ids": render_ids}
+    ctx.progress(1.0, f"Queued {len(render_ids)} renders ({len(found)} clips found)", force=True)
+    return {"clip_ids": clip_ids, "render_ids": render_ids, "found": len(found)}
 
 
 def handle_autoclip(ctx: JobContext) -> dict[str, Any]:
     sid = ctx.payload.get("source_video_id")
     if not sid:
         raise PermanentError("payload.source_video_id is required")
-    try:
-        max_clips = int(ctx.payload.get("max_clips") or DEFAULT_MAX_CLIPS)
-    except (TypeError, ValueError):
-        raise PermanentError("payload.max_clips must be an integer") from None
-    return autoclip(ctx, sid, max(1, min(50, max_clips)), ctx.payload.get("style_id") or None)
+    def number(key: str, default: Optional[int], hi: int) -> Optional[int]:
+        raw = ctx.payload.get(key)
+        if raw in (None, "", 0):
+            return default
+        try:
+            return max(1, min(hi, int(raw)))
+        except (TypeError, ValueError):
+            raise PermanentError(f"payload.{key} must be an integer") from None
+
+    render_clips = number("render_clips", DEFAULT_RENDER_CLIPS, 50)
+    return autoclip(ctx, sid, number("max_clips", None, 100), ctx.payload.get("style_id") or None, render_clips or DEFAULT_RENDER_CLIPS)
 
 
 HANDLERS = {"autoclip": handle_autoclip}

@@ -16,6 +16,7 @@ export const ClipComposition: React.FC<ClipProps> = (props) => {
 
   return (
     <AbsoluteFill style={{ background: "#000", overflow: "hidden" }}>
+      {/* a frame set by hand in the editor (for the clip, or for one piece) replaces the automatic crop track */}
       <MainTrack edit={edit} sourceUrl={sourceUrl} srcW={srcW} srcH={srcH} cropTrack={cropTrack} />
       <BrollLayer items={edit.broll} assetBaseUrl={assetBaseUrl} />
       <AudioLayer items={edit.audio} assetBaseUrl={assetBaseUrl} />

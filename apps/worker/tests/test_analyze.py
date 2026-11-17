@@ -97,7 +97,7 @@ def test_candidates_on_sentence_boundaries_and_length():
     sents = segment.build_sentences(words)
     dur = words[-1]["e"] + 1
     cands = segment.generate_candidates(sents, dur)
-    assert 3 <= len(cands) <= segment.MAX_CANDIDATES
+    assert 3 <= len(cands) <= segment.pool_size(dur)  # the pool grows with the video
     starts = {round(s.s - segment.PAD_START, 3) for s in sents} | {0.0}
     ends = {round(s.e + segment.PAD_END, 3) for s in sents} | {round(dur, 3)}
     for c in cands:
@@ -154,7 +154,13 @@ def test_final_score_formula():
     r = s.rating
     llm = 0.35 * r.hook + 0.2 * r.context + 0.2 * r.emotion + 0.25 * r.payoff
     f = features.window_features(energy, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], c.start, c.end)
-    assert s.score == pytest.approx(0.7 * llm + 0.2 * f["energy_score"] + 0.1 * f["cuts_score"], abs=0.02)
+    # what is said (60 %) + how it is delivered: audio hype and text hype (30 %) + pacing (10 %)
+    from klipz_worker.steps.score import text_hype
+
+    wps = sum(len(x.words) for x in c.sentences) / c.duration
+    hype = 0.6 * f["audio_hype"] + 0.4 * text_hype(c, wps)
+    assert s.breakdown["hype"] == pytest.approx(hype, abs=0.06)
+    assert s.score == pytest.approx(0.6 * llm + 0.3 * hype + 0.1 * f["cuts_score"], abs=0.05)
 
 
 def test_validate_ratings_clamps_and_rejects():
@@ -289,9 +295,16 @@ def test_faster_whisper_falls_back_to_cpu(monkeypatch, tmp_path):
         return "model"
 
     monkeypatch.setattr(t, "_load", fake_load)
-    monkeypatch.setattr(t, "_run", lambda m, a, d, p: {"language": "en", "words": [], "model": "x"})
+    # the audio is decoded once by our own ffmpeg (not PyAV) and passed to the model as samples
+    import numpy as np
+    from klipz_worker import ffmpeg as ff
+
+    seen: list = []
+    monkeypatch.setattr(ff, "decode_mono_16k", lambda p: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(t, "_run", lambda m, a, d, p: seen.append(a) or {"language": "en", "words": [], "model": "x"})
     assert t.transcribe(tmp_path / "a.wav", 1.0, lambda p: None)["model"] == "x"
     assert calls == [("cuda", "float16"), ("cpu", "int8")]
+    assert isinstance(seen[0], np.ndarray) and seen[0].dtype == np.float32
 
 
 # ── full analyze ────────────────────────────────────────────────────────
@@ -340,7 +353,12 @@ def test_analyze_full_flow(settings, db, project, sample_video):
     assert scores == sorted(scores, reverse=True)
     for c in clips:
         assert c["status"] == "candidate" and c["caption_style_id"] == "bold-outline"
-        assert c["crop_track"] is None and c["edit_state"] is None
+        assert c["crop_track"] is None
+        # Smart Edit is on by default: every new clip gets an automatic edit inside its own range, version 0
+        edit = c["edit_state"]
+        assert edit["version"] == 1 and int(c["edit_version"] or 0) == 0
+        assert all(c["start_sec"] - 1e-6 <= p["srcStart"] < p["srcEnd"] <= c["end_sec"] + 1e-6 for p in edit["video"])
+        assert edit["captions"]["words"] and edit["progressBar"]["enabled"] is True
         assert 15 - 1 <= c["end_sec"] - c["start_sec"] <= 91 and c["title"] and c["hook"] and c["reason"]
         assert c["score_breakdown"]["scorer"] == "heuristic" and "keywords" in c["score_breakdown"]
     for a in clips:

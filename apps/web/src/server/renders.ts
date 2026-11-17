@@ -7,8 +7,16 @@ import { enqueueJob } from "./jobs";
 import { storagePath } from "./paths";
 import { getClip, getRender, rendersForClip } from "./repo";
 
+export type RenderEngine = "auto" | "fast" | "studio";
+
 export interface RenderOptions {
   denoise?: boolean;
+  /** auto / fast = the FFmpeg renderer when the edit allows it; studio = always the Chrome (Remotion) renderer */
+  engine?: RenderEngine;
+  /** written by the worker: which renderer produced the file */
+  rendered_by?: "fast" | "studio";
+  /** written by the worker: why the fast renderer was not used */
+  fast_skipped?: string;
 }
 
 export interface CreateRenderResult {
@@ -24,7 +32,8 @@ export interface CreateRenderResult {
  * instead (the editor can be double-clicked safely).
  */
 export function createRender(clipId: string, opts: RenderOptions = {}): CreateRenderResult {
-  const options = { denoise: Boolean(opts.denoise) };
+  const engine: RenderEngine = opts.engine === "studio" ? "studio" : "auto";
+  const options = { denoise: Boolean(opts.denoise), ...(engine === "studio" ? { engine } : {}) };
   const created = tx(() => {
     const clip = getClip(clipId);
     if (!clip) throw new HttpError(404, "Clip not found");
@@ -32,7 +41,8 @@ export function createRender(clipId: string, opts: RenderOptions = {}): CreateRe
       (r) =>
         (r.status === "queued" || r.status === "rendering") &&
         r.edit_version === clip.edit_version &&
-        Boolean((r as Render & { options?: RenderOptions }).options?.denoise) === options.denoise,
+        Boolean((r as Render & { options?: RenderOptions }).options?.denoise) === options.denoise &&
+        ((r as Render & { options?: RenderOptions }).options?.engine === "studio") === (engine === "studio"),
     );
     if (live) return { render: live, projectId: clip.project_id, reused: true, job: null as Job | null };
     const id = newId();

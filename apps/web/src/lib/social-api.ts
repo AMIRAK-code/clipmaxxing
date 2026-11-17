@@ -6,6 +6,7 @@ export interface ProviderStatusDto {
   missing: string[];
   viaAggregator: boolean;
   redirectUri: string;
+  keySource: "env" | "app" | null;
 }
 
 export interface AccountsResponse {
@@ -41,7 +42,7 @@ export interface CaptionSuggestionDto {
 }
 
 export interface AiCaptionsResponse {
-  generator: "claude" | "heuristic";
+  generator: "claude" | "gemini" | "openai" | "custom" | "ollama" | "heuristic";
   model?: string;
   note?: string;
   captions: Partial<Record<Provider, CaptionSuggestionDto>>;

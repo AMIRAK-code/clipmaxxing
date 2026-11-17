@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
-import { OUT_H, OUT_W, type AudioItem, type BrollItem, type TextItem } from "@klipz/shared";
+import { OUT_H, OUT_W, fontStack, type AudioItem, type BrollItem, type TextItem } from "@klipz/shared";
 import { entrance } from "./anim";
 import { resolveSrc } from "./props";
 
@@ -88,7 +88,7 @@ const TextView: React.FC<{ item: TextItem }> = ({ item }) => {
         top: item.y * OUT_H,
         transform: `translate(-50%, calc(-50% + ${a.translateY}px)) scale(${a.scale})`,
         opacity: a.opacity,
-        fontFamily: `"${item.fontFamily}", sans-serif`,
+        fontFamily: fontStack(item.fontFamily),
         fontWeight: item.fontWeight,
         fontSize: item.fontSize,
         color: item.color,

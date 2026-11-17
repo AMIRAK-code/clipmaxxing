@@ -11,7 +11,7 @@
  */
 import { z } from 'zod';
 import { composeCaption } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, commitPhase } from '../errors';
 import { chunkSizeOf, httpRequest, planChunks, pollOptionsOf, pollUntil, uploadInChunks, withAssetSource, type ErrorMapper } from '../http';
 import { PLATFORM_LIMITS, X_LONG_VIDEO_MAX_BYTES, X_LONG_VIDEO_MAX_SEC } from '../limits';
 import { buildAuthUrl, tokenSetFromOAuth } from '../oauth';
@@ -227,12 +227,14 @@ export const xPublisher: Publisher = {
       }
     }
 
-    const tweet = await httpRequest(ctx, {
-      url: `${API}/tweets`,
-      bearer: token,
-      json: compact({ text: composeCaption('x', meta), media: { media_ids: [mediaId] }, reply_settings: options.replySettings }),
-      mapError: xError,
-    });
+    const tweet = await commitPhase('creating', () =>
+      httpRequest(ctx, {
+        url: `${API}/tweets`,
+        bearer: token,
+        json: compact({ text: composeCaption('x', meta), media: { media_ids: [mediaId] }, reply_settings: options.replySettings }),
+        mapError: xError,
+      }),
+    );
     const id = str(pick(tweet.data, 'data', 'id'));
     if (!id) throw new PublishError('X did not return a post id', { code: 'provider_error', providerPayload: tweet.data });
     return { externalId: id, status: 'published', url: tweetUrl(account, id) };

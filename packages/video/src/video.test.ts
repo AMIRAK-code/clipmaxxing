@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FONT_FILES, createDefaultEditState, type VideoPiece } from "@klipz/shared";
+import { FALLBACK_FONT, FONT_FILES, createDefaultEditState, type VideoPiece } from "@klipz/shared";
 import { entrance, hookEnvelope, transitionStyle } from "./anim";
 import { fitLines, fitScale, measureText } from "./fit";
 import { clipDurationInFrames, normalizeProps, resolveSrc } from "./props";
@@ -177,13 +177,13 @@ describe("pieceFrames", () => {
 });
 
 describe("fonts", () => {
-  it("copy-fonts filenames match shared FONT_FILES", () => {
-    const expected = Object.values(FONT_FILES).flatMap((f) => f.map((x) => x.file)).sort();
+  it("copy-fonts filenames match shared FONT_FILES and FALLBACK_FONT", () => {
+    const expected = [...Object.values(FONT_FILES).flatMap((f) => f.map((x) => x.file)), FALLBACK_FONT.file].sort();
     expect(Object.keys(FONT_COPY).sort()).toEqual(expected);
   });
   it("woff2 files exist in public/fonts", () => {
     const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../apps/web/public/fonts");
-    for (const files of Object.values(FONT_FILES)) {
+    for (const files of [...Object.values(FONT_FILES), [FALLBACK_FONT]]) {
       for (const f of files) expect(fs.statSync(path.join(dir, f.file)).size).toBeGreaterThan(1000);
     }
   });

@@ -7,7 +7,6 @@ import {
   TIKTOK_LABEL_PAID_PARTNERSHIP,
   TIKTOK_LABEL_PROMOTIONAL,
   TIKTOK_MUSIC_USAGE_URL,
-  ensureFreshTokens,
   getTikTokCreatorInfo,
   isPublishError,
   type PublisherContext,
@@ -20,7 +19,7 @@ import { configOrPlaceholder, providerConfig, sandboxMode } from "./config";
 import { markNeedsReconnect } from "./accounts";
 import { mockTikTokCreatorInfo } from "./mock";
 import { getPublisherFor } from "./publishers";
-import { loadTokens, saveTokens } from "./vault";
+import { freshTokens, loadTokens } from "./vault";
 
 export const TIKTOK_CONSENT = {
   text: TIKTOK_CONSENT_TEXT,
@@ -44,14 +43,14 @@ export async function creatorInfoFor(accountId: string, deps: { fetchInfo?: (ctx
     if (account.via_aggregator) throw new HttpError(409, "Creator info is not available for aggregator-routed accounts");
     const cfg = providerConfig("tiktok") ?? configOrPlaceholder("tiktok");
     const ctx: PublisherContext = { config: cfg };
-    const tokens = loadTokens(account.id);
-    if (!tokens) throw new HttpError(409, "Account has no stored credentials, reconnect it");
+    if (!loadTokens(account.id)) throw new HttpError(409, "Account has no stored credentials, reconnect it");
     try {
       const publisher = getPublisherFor("tiktok");
-      const fresh = await ensureFreshTokens(publisher, ctx, tokens);
-      if (fresh.refreshed) saveTokens(account.id, fresh.tokens);
-      info = await (deps.fetchInfo ? deps.fetchInfo(ctx, fresh.tokens.accessToken) : getTikTokCreatorInfo(ctx, fresh.tokens));
+      const fresh = await freshTokens(account.id, publisher, ctx); // per-account lock, shared with the publish engine
+      if (!fresh) throw new HttpError(409, "Account has no stored credentials, reconnect it");
+      info = await (deps.fetchInfo ? deps.fetchInfo(ctx, fresh.accessToken) : getTikTokCreatorInfo(ctx, fresh));
     } catch (e) {
+      if (e instanceof HttpError) throw e;
       if (isPublishError(e) && e.needsReconnect) {
         markNeedsReconnect(account.id, e.message);
         throw new HttpError(409, "TikTok needs to be reconnected");

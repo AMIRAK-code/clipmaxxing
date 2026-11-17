@@ -17,7 +17,7 @@
  */
 import { z } from 'zod';
 import { composeCaption } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, commitPhase } from '../errors';
 import { httpRequest, pollOptionsOf, pollUntil, withAssetSource } from '../http';
 import { INSTAGRAM_RECOMMENDED_MAX_SEC, PLATFORM_LIMITS } from '../limits';
 import type { AccountInfo, PostStatus, Publisher, PublisherContext, TokenSet } from '../types';
@@ -61,12 +61,19 @@ async function containerStatus(ctx: PublisherContext, token: string, containerId
 }
 
 async function publishContainer(ctx: PublisherContext, token: string, igId: string, containerId: string): Promise<{ id: string; url?: string }> {
-  const res = await httpRequest(ctx, {
-    url: graphUrl(ctx, `${igId}/media_publish`),
-    form: { creation_id: containerId },
-    bearer: token,
-    mapError: metaError,
-  });
+  // media_publish creates the post. If its answer is lost, keep polling the container: getStatus()
+  // sees PUBLISHED (then resolves the media) or FINISHED (then publishes it once).
+  const res = await commitPhase(
+    'creating',
+    () =>
+      httpRequest(ctx, {
+        url: graphUrl(ctx, `${igId}/media_publish`),
+        form: { creation_id: containerId },
+        bearer: token,
+        mapError: metaError,
+      }),
+    `${CONTAINER_PREFIX}${containerId}`,
+  );
   const id = str(asRecord(res.data).id);
   if (!id) throw new PublishError('Instagram media_publish returned no media id', { code: 'provider_error', providerPayload: res.data });
   const url = await permalink(ctx, token, id).catch(() => undefined);

@@ -7,8 +7,11 @@ import {
   duckGainAt,
   layoutAt,
   paneVideoStyle,
+  pieceCropTrack,
   pieceDuration,
+  pieceLook,
   pieceOffsets,
+  pieceVolume,
   zoomAt,
   type CropTrack,
   type EditState,
@@ -81,11 +84,13 @@ const PieceView: React.FC<{
   const tSrc = piece.srcStart + local / fps;
   const tOut = (from + local) / fps;
 
-  const layout = layoutAt(cropTrack, tSrc, OUT_W, OUT_H, srcW, srcH);
+  // a piece can carry its own crop, look and sound level (set in the editor after a split)
+  const layout = layoutAt(pieceCropTrack(edit, piece, cropTrack, srcW, srcH), tSrc, OUT_W, OUT_H, srcW, srcH);
   const trimBefore = Math.round(piece.srcStart * fps);
   // trimAfter must stay above trimBefore even for sub-frame pieces
   const trimAfter = Math.max(trimBefore + 1, Math.round(piece.srcEnd * fps));
-  const mainVolume = (f: number) => duckGainAt(edit, (from + f) / fps);
+  const levels = { broll: edit.broll, audio: edit.audio, duckLevel: edit.duckLevel, volume: pieceVolume(edit, piece) };
+  const mainVolume = (f: number) => duckGainAt(levels, (from + f) / fps);
   const silent = () => 0;
 
   const tr = piece.transitionIn;
@@ -93,7 +98,7 @@ const PieceView: React.FC<{
   const ts = trFrames > 0 && local < trFrames ? transitionStyle(tr?.type, local / trFrames, OUT_W) : transitionStyle("none", 1);
 
   const zoom = zoomAt(edit.zooms, tOut);
-  const filter = (LOOKS[edit.look] as (typeof LOOKS)[keyof typeof LOOKS] | undefined)?.filter ?? "none";
+  const filter = (LOOKS[pieceLook(edit, piece)] as (typeof LOOKS)[keyof typeof LOOKS] | undefined)?.filter ?? "none";
 
   const bgScale = Math.max(OUT_W / srcW, OUT_H / srcH);
 

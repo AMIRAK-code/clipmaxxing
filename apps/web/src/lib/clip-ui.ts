@@ -13,12 +13,19 @@ export const scoreTone = (score: number | null | undefined): ScoreTone => {
 export const scorerLabel = (b: ScoreBreakdown | null): string => {
   if (!b?.scorer) return "Unscored";
   if (/claude|anthropic/i.test(b.scorer)) return "Claude";
+  if (/gemini/i.test(b.scorer)) return "Gemini";
+  if (/openai/i.test(b.scorer)) return "OpenAI";
+  if (/custom/i.test(b.scorer)) return "Custom AI";
   if (/ollama/i.test(b.scorer)) return "Ollama";
   if (/heuristic/i.test(b.scorer)) return "Heuristic";
   return b.scorer;
 };
 
-export const BREAKDOWN_KEYS = ["hook", "context", "emotion", "payoff", "energy"] as const;
+export const BREAKDOWN_KEYS = ["hook", "context", "emotion", "payoff", "hype"] as const;
+
+/** One bar of the breakdown. `hype` falls back to the older `energy` number on clips scored before it existed. */
+export const breakdownValue = (b: ScoreBreakdown, key: (typeof BREAKDOWN_KEYS)[number]): number =>
+  key === "hype" ? (b.hype ?? b.energy) : b[key];
 
 /** Clips best-first; ties keep source order. */
 export const rankClips = (clips: Clip[]): Clip[] =>

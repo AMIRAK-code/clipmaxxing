@@ -1,9 +1,8 @@
-import fs from "node:fs";
 import { z } from "zod";
-import { run, update } from "@/server/db";
+import { all, run, update } from "@/server/db";
 import { body, notFound, ok, route } from "@/server/http";
 import { jobsForProject } from "@/server/jobs";
-import { storagePath } from "@/server/paths";
+import { removeStorageDir } from "@/server/paths";
 import { latestRenderByClip } from "@/server/renders";
 import { clipsForProject, getProject, sourceForProject } from "@/server/repo";
 
@@ -27,7 +26,10 @@ export const DELETE = route<{ id: string }>((_req, { id }) => {
   const dirs = new Set<string>();
   if (source) dirs.add(`sources/${source.id}`);
   for (const c of clipsForProject(id)) dirs.add(`clips/${c.id}`);
+  // Rendered videos and covers live in renders/<render id>; their rows go with the clips (cascade).
+  for (const r of all<{ id: string }>("select r.id from renders r join clips c on c.id = r.clip_id where c.project_id = ?", id)) dirs.add(`renders/${r.id}`);
+  // Jobs go with the project (cascade); the worker notices its job is gone at its next progress step.
   run("delete from projects where id = ?", id);
-  for (const d of dirs) fs.rmSync(storagePath(d), { recursive: true, force: true });
+  for (const d of dirs) void removeStorageDir(d);
   return ok({ deleted: true });
 });

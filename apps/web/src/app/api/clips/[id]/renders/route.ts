@@ -4,12 +4,12 @@ import { createRender, renderViews } from "@/server/renders";
 
 export const dynamic = "force-dynamic";
 
-const Body = z.object({ denoise: z.boolean().optional() }).strict();
+const Body = z.object({ denoise: z.boolean().optional(), engine: z.enum(["auto", "fast", "studio"]).optional() }).strict();
 
 /** GET → every render of the clip (newest first) with per-platform checks for ready ones. */
 export const GET = route<{ id: string }>((_req, { id }) => ok({ renders: renderViews(id) }));
 
-/** POST {denoise?} → queue a render of the current edit version (or return the in-flight one). */
+/** POST {denoise?, engine?} → queue a render of the current edit version (or return the in-flight one). */
 export const POST = route<{ id: string }>(async (req, { id }) => {
   let raw: unknown = {};
   const text = await req.text();

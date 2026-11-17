@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "klipz-web-test-"));
 process.env.KLIPZ_DATA_DIR = tmp;
@@ -121,6 +121,16 @@ describe("clip patch planning", () => {
     expect(p.rangeChanged).toBe(true);
   });
 
+  it("drops an untouched automatic edit when the range changes, never a person's edit", () => {
+    const auto = planClipPatch({ start_sec: 10, end_sec: 30, edit_version: 0 }, 100, { end_sec: 25 });
+    expect(auto.columns).toMatchObject({ edit_state: null, crop_track: null });
+    expect(auto.bumpVersion).toBe(false);
+    const mine = planClipPatch(clip, 100, { end_sec: 25 }); // edit_version 2: the person edited it
+    expect("edit_state" in mine.columns).toBe(false);
+    const same = planClipPatch({ start_sec: 10, end_sec: 30, edit_version: 0 }, 100, { title: "x" });
+    expect("edit_state" in same.columns).toBe(false);
+  });
+
   it("enforces 1 s minimum and 180 s maximum", () => {
     expect(() => planClipPatch(clip, 1000, { end_sec: 10.5 })).toThrow(HttpError);
     expect(() => planClipPatch(clip, 1000, { start_sec: 0, end_sec: MAX_CLIP_SEC + 1 })).toThrow(/at most/);
@@ -195,6 +205,22 @@ describe("applyClipPatch", () => {
     expect(fs.existsSync(dir)).toBe(false);
     expect(getClip(clipId)).toBeUndefined();
     expect(deleteClip(clipId)).toBe(false);
+  });
+
+  it("deleteClip also removes the clip's rendered videos (renders/<id>), not other clips' renders", async () => {
+    const { clipId } = seed();
+    const other = seed();
+    const mine = newId();
+    const theirs = newId();
+    run("insert into renders (id, clip_id, status) values (?, ?, 'ready')", mine, clipId);
+    run("insert into renders (id, clip_id, status) values (?, ?, 'ready')", theirs, other.clipId);
+    for (const id of [mine, theirs]) {
+      fs.mkdirSync(storagePath(`renders/${id}`), { recursive: true });
+      fs.writeFileSync(storagePath(`renders/${id}/clip.mp4`), "x");
+    }
+    expect(deleteClip(clipId)).toBe(true);
+    await vi.waitFor(() => expect(fs.existsSync(storagePath(`renders/${mine}`))).toBe(false));
+    expect(fs.existsSync(storagePath(`renders/${theirs}/clip.mp4`))).toBe(true);
   });
 
   it("deleteClip cancels queued jobs for that clip only", () => {

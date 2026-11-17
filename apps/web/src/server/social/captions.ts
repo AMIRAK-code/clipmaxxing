@@ -1,3 +1,4 @@
+import { aiEnv, chatEngine, type ChatEngine } from "../ai-settings";
 import { z } from "zod";
 import type { Clip, Provider } from "@klipz/shared";
 import { PROVIDERS } from "@klipz/shared";
@@ -19,7 +20,7 @@ export interface CaptionSuggestion {
 }
 
 export interface CaptionResponse {
-  generator: "claude" | "heuristic";
+  generator: CaptionGenerator;
   model?: string;
   /** Why Claude was not used / partly not used (never contains the API key). */
   note?: string;
@@ -27,6 +28,17 @@ export interface CaptionResponse {
 }
 
 /** The small slice of the Anthropic SDK used here, so tests can inject a fake. */
+export type CaptionGenerator = "claude" | "gemini" | "openai" | "custom" | "ollama" | "heuristic";
+
+export const GENERATOR_LABEL: Record<CaptionGenerator, string> = {
+  claude: "Claude",
+  gemini: "Gemini",
+  openai: "OpenAI",
+  custom: "the custom AI",
+  ollama: "the local model",
+  heuristic: "the offline generator",
+};
+
 export interface AnthropicLike {
   messages: {
     create(params: Record<string, unknown>): Promise<{ content: { type: string; name?: string; input?: unknown; text?: string }[] }>;
@@ -176,22 +188,77 @@ async function makeClient(env: Record<string, string | undefined>): Promise<Anth
 
 export const DEFAULT_MODEL = "claude-opus-5-5";
 
+function parseJsonObject(text: string): unknown {
+  const t = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+  try {
+    return JSON.parse(t);
+  } catch {
+    const m = /\{[\s\S]*\}/.exec(t);
+    if (m) return JSON.parse(m[0]);
+    throw new Error("the model did not return JSON");
+  }
+}
+
+/**
+ * The same `messages.create` shape the caption code uses for Claude, answered by any OpenAI-compatible
+ * chat API (Gemini, OpenAI, a custom API, Ollama): the tool's schema goes into the prompt, the reply is
+ * read as JSON and handed back as the tool call.
+ */
+export function openAiCompatClient(engine: ChatEngine, fetchImpl: typeof fetch = fetch): AnthropicLike {
+  return {
+    messages: {
+      async create(params) {
+        const tool = (params.tools as { name: string; input_schema: unknown }[])[0]!;
+        const user = (params.messages as { content: string }[])[0]!.content;
+        const base = {
+          model: engine.model,
+          messages: [
+            { role: "system", content: `Answer with ONE JSON object and nothing else. It must match this JSON schema:\n${JSON.stringify(tool.input_schema)}` },
+            { role: "user", content: user },
+          ],
+        };
+        const call = (body: Record<string, unknown>) =>
+          fetchImpl(`${engine.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(engine.apiKey ? { authorization: `Bearer ${engine.apiKey}` } : {}) },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(60_000),
+          });
+        let res = await call({ ...base, response_format: { type: "json_object" } });
+        if (res.status === 400) res = await call(base); // servers without JSON mode: the prompt still asks for JSON
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+        return { content: [{ type: "tool_use", name: tool.name, input: parseJsonObject(data.choices?.[0]?.message?.content ?? "") }] };
+      },
+    },
+  };
+}
+
 export async function generateCaptions(req: CaptionRequest, deps: CaptionDeps = {}): Promise<CaptionResponse> {
-  const env = deps.env ?? process.env;
+  const env = deps.env ?? aiEnv();
   const clip = getClip(req.clipId) ?? (() => { throw new HttpError(404, "Clip not found"); })();
   const ctx = clipContext(clip);
   const providers = [...new Set(req.providers)];
   const heuristic = (): CaptionResponse["captions"] => Object.fromEntries(providers.map((p) => [p, heuristicCaption(p, ctx, req.tone)]));
 
   let client: AnthropicLike | undefined = deps.client;
+  let generator: CaptionGenerator = "claude";
+  let model = env.ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL;
+  // The engine chosen on the AI page writes the captions too (tests inject a client / env and skip this).
+  const engine = !deps.client && !deps.env ? chatEngine() : null;
+  if (engine) {
+    client = openAiCompatClient(engine);
+    generator = engine.kind;
+    model = engine.model;
+  }
   try {
     client ??= await makeClient(env);
   } catch (e) {
     return { generator: "heuristic", note: `Claude client unavailable: ${(e as Error).message}`.slice(0, 200), captions: heuristic() };
   }
   if (!client) return { generator: "heuristic", captions: heuristic() };
+  const who = GENERATOR_LABEL[generator];
 
-  const model = env.ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL;
   try {
     const props = Object.fromEntries(
       providers.map((p) => [
@@ -235,10 +302,11 @@ export async function generateCaptions(req: CaptionRequest, deps: CaptionDeps = 
         missing.push(p);
       }
     }
-    return { generator: "claude", model, ...(missing.length ? { note: `Fell back to the offline generator for: ${missing.join(", ")}` } : {}), captions };
+    return { generator, model, ...(missing.length ? { note: `Fell back to the offline generator for: ${missing.join(", ")}` } : {}), captions };
   } catch (e) {
-    console.warn("[captions] Claude failed, using offline generator:", (e as Error).message);
-    return { generator: "heuristic", note: `Claude request failed (${(e as Error).message.slice(0, 120)}); used the offline generator`, captions: heuristic() };
+    console.warn(`[captions] ${generator} failed, using offline generator:`, (e as Error).message);
+    const label = who.charAt(0).toUpperCase() + who.slice(1);
+    return { generator: "heuristic", note: `${label} request failed (${(e as Error).message.slice(0, 120)}); used the offline generator`, captions: heuristic() };
   }
 }
 

@@ -6,11 +6,14 @@ import { getClip, getSource } from "@/server/repo";
 export const dynamic = "force-dynamic";
 
 const Enqueue = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("analyze"), sourceVideoId: z.string().uuid(), maxClips: z.number().int().min(1).max(30).optional() }),
+  // maxClips: how many potential clips to find (omit = as many as the video's length suggests, up to 50)
+  z.object({ type: z.literal("analyze"), sourceVideoId: z.string().uuid(), maxClips: z.number().int().min(1).max(100).optional() }),
   z.object({
     type: z.literal("autoclip"),
     sourceVideoId: z.string().uuid(),
-    maxClips: z.number().int().min(1).max(30).optional(),
+    maxClips: z.number().int().min(1).max(100).optional(),
+    // renderClips: how many of the best clips AutoClip renders right away (default 10)
+    renderClips: z.number().int().min(1).max(50).optional(),
     styleId: z.string().max(64).optional(),
   }),
   z.object({ type: z.literal("reframe"), clipId: z.string().uuid() }),
@@ -31,6 +34,7 @@ export const POST = route(async (req) => {
   const payload: Record<string, unknown> = { source_video_id: source.id };
   if ("maxClips" in input && input.maxClips) payload.max_clips = input.maxClips;
   if (input.type === "autoclip" && input.styleId) payload.style_id = input.styleId;
+  if (input.type === "autoclip" && input.renderClips) payload.render_clips = input.renderClips;
   if (input.type === "analyze") payload.force = true;
   const job = enqueueJob(input.type, payload, { projectId: source.project_id, dedupeKey: `${input.type}:${source.id}` });
   return ok({ job });

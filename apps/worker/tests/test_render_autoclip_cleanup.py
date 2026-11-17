@@ -456,3 +456,23 @@ def test_runner_enqueues_one_cleanup_per_utc_day(db, settings):
     assert len(rows) == 1 and rows[0]["status"] == "succeeded" and rows[0]["dedupe_key"].startswith("cleanup:")
     assert r.maybe_enqueue_cleanup() is False  # not again the same day, even though it finished
     assert db.conn.execute("select count(*) from jobs where type = 'cleanup'").fetchone()[0] == 1
+
+
+def test_cleanup_sweeps_folders_of_deleted_projects(db, settings, project):
+    """A project deleted while its video was still open leaves its folder behind (Windows: EPERM)."""
+    live = db.insert("source_videos", {"project_id": project, "origin": "upload", "status": "ready"})
+    old_t = time.time() - 2 * 3600
+    paths = {}
+    for name, key in (("live", f"sources/{live}/source.mp4"), ("orphan", "sources/gone-project/source.mp4"),
+                      ("fresh", "sources/just-deleted/source.mp4"), ("clip", "clips/gone-clip/crop.json"),
+                      ("render", "renders/gone-render/clip.mp4")):
+        p = settings.storage_path(key)
+        p.write_bytes(b"x" * 50)
+        paths[name] = p
+        if name != "fresh":
+            os.utime(p.parent, (old_t, old_t))
+    res = cl.cleanup(ctx_for(db, settings, project, "cleanup"))
+    assert res["orphan_folders_deleted"] == 3 and res["bytes_freed"] >= 150
+    assert paths["live"].exists() and paths["fresh"].exists()  # known source; and one too recent to judge
+    assert not paths["orphan"].parent.exists() and not paths["clip"].parent.exists()
+    assert not paths["render"].parent.exists()  # rendered video of a deleted clip

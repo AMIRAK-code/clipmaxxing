@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { backoffDelayMs } from '../backoff';
 import { composeCaption, composeTitle, normalizeHashtag } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, toCommitted } from '../errors';
 import { chunkSizeOf, httpRequest, withAssetSource, type AssetSource, type ErrorMapper } from '../http';
 import { PLATFORM_LIMITS } from '../limits';
 import { buildAuthUrl, tokenSetFromOAuth } from '../oauth';
@@ -118,11 +118,16 @@ async function uploadResumable(ctx: PublisherContext, uploadUrl: string, source:
   const sleep = sleepOf(ctx);
   let offset = 0;
   let failures = 0;
+  // Once the last byte may have reached YouTube the video can exist: from then on a failure must not
+  // make the engine start a new upload (that would post the video twice).
+  let finalSent = false;
+  const giveUp = (err: unknown): unknown => (finalSent ? toCommitted(err, 'creating') : err);
 
   for (;;) {
     const end = Math.min(offset + chunkSize, total);
     try {
       const bytes = await source.readChunk(offset, end);
+      if (end >= total) finalSent = true;
       const res = await httpRequest(ctx, {
         method: 'PUT',
         url: uploadUrl,
@@ -141,7 +146,7 @@ async function uploadResumable(ctx: PublisherContext, uploadUrl: string, source:
       continue;
     } catch (err) {
       const transient = err instanceof PublishError && err.retryable && (err.code === 'network_error' || (err.status ?? 0) >= 500);
-      if (!transient || failures >= maxRetries) throw err;
+      if (!transient || failures >= maxRetries) throw giveUp(err);
       failures++;
       await sleep(backoffDelayMs(failures));
     }
@@ -158,7 +163,7 @@ async function uploadResumable(ctx: PublisherContext, uploadUrl: string, source:
       offset = nextOffsetFromRange(probe.headers.get('range'));
     } catch (err) {
       const transient = err instanceof PublishError && err.retryable && (err.code === 'network_error' || (err.status ?? 0) >= 500);
-      if (!transient) throw err;
+      if (!transient) throw giveUp(err);
       /* keep the previous offset and try again on the next loop */
     }
   }

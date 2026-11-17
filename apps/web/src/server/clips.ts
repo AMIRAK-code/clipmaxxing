@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import { z } from "zod";
 import type { Clip, SourceVideo, Word } from "@klipz/shared";
-import { run, tx, nowIso } from "./db";
+import { all, run, tx, nowIso } from "./db";
 import { HttpError } from "./http";
 import { enqueueJob } from "./jobs";
-import { storagePath } from "./paths";
+import { removeStorageDir, storagePath } from "./paths";
 import { getClip, getSource, getTranscript } from "./repo";
 
 export const MIN_CLIP_SEC = 1;
@@ -64,6 +64,9 @@ export function planClipPatch(clip: Pick<Clip, "start_sec" | "end_sec" | "edit_v
       columns.start_sec = start;
       columns.end_sec = end;
       columns.crop_track = null; // the framing belongs to the old range
+      // An automatic Smart Edit nobody touched (version 0) was cut for the old range too: drop it, the
+      // reframe job that follows rebuilds it for the new range. A person's own edit is never discarded.
+      if (clip.edit_version === 0 && patch.edit_state === undefined) columns.edit_state = null;
       rangeChanged = true;
     }
   }
@@ -120,10 +123,12 @@ export function clipDetail(clipId: string): { clip: Clip; source: SourceVideo | 
   return { clip, source, words };
 }
 
-/** Delete the clip row (renders/posts cascade) and its stored files. */
+/** Delete the clip row (renders/posts cascade) and its stored files, rendered videos included. */
 export function deleteClip(clipId: string): boolean {
+  const renderIds = all<{ id: string }>("select id from renders where clip_id = ?", clipId).map((x) => x.id);
   const r = run("delete from clips where id = ?", clipId);
   if (r.changes === 0) return false;
+  for (const id of renderIds) void removeStorageDir(`renders/${id}`);
   // Queued work for a clip that no longer exists would only fail in the worker.
   run(
     "update jobs set status = 'cancelled', finished_at = ?, updated_at = ? where status = 'queued' and json_extract(payload, '$.clip_id') = ?",

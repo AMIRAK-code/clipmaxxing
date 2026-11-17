@@ -42,6 +42,8 @@ export interface CropSegment {
   keys: CropKey[];
   /** second subject (bottom half) for the stacked `split` layout */
   keys2?: CropKey[];
+  /** `crop` only: 1 (default) = the largest window that fits, 2 = half the size (twice as close) */
+  zoom?: number;
 }
 export interface CropTrack {
   version: 1;
@@ -108,6 +110,12 @@ export interface VideoPiece {
   srcStart: number;
   srcEnd: number;
   transitionIn?: { type: TransitionType; durationSec: number };
+  /** this piece's own crop / zoom / position; absent = the clip's framing (EditState.frame or automatic) */
+  frame?: ManualFrame;
+  /** this piece's own look; absent = the clip's look */
+  look?: LookId;
+  /** this piece's own sound level (0..1.5); absent = the clip's volume */
+  volume?: number;
 }
 
 export interface BrollItem {
@@ -162,8 +170,28 @@ export interface ZoomKey {
 
 export type LookId = "none" | "warm" | "cool" | "cinematic" | "bw" | "vivid" | "fade";
 
+/**
+ * Framing set by hand in the editor. On EditState it replaces the automatic crop track (face tracking)
+ * for the whole clip; on a VideoPiece it applies to that piece only and wins over the clip's.
+ */
+export interface ManualFrame {
+  /** crop = fill the screen with a window of the picture; letterbox = the whole picture over a blurred copy */
+  layout: "crop" | "letterbox";
+  /** centre of the window inside the picture, 0..1 (0.5 = middle) */
+  cx: number;
+  cy: number;
+  /** 1 = the largest window that fits the screen, up to 4 = four times closer */
+  zoom: number;
+}
+
+export const MAX_FRAME_ZOOM = 4;
+
 export interface EditState {
   version: 1;
+  /** set by Smart Edit on edits nobody has touched yet */
+  auto?: boolean;
+  /** manual crop / zoom / position; absent = automatic framing */
+  frame?: ManualFrame | null;
   video: VideoPiece[];
   captions: {
     enabled: boolean;
@@ -235,10 +263,16 @@ export interface SourceVideo {
   fps: number | null;
   status: "pending" | "uploading" | "importing" | "ready" | "failed" | "deleted";
   error: string | null;
+  /** how clips of this video are made vertical */
+  framing: Framing;
   scene_cuts: number[] | null;
   expires_at: string;
   created_at: string;
 }
+
+/** speaker = follow the talking person (face tracking); center = middle of the picture; fit = whole picture */
+export type Framing = "speaker" | "center" | "fit";
+export const FRAMINGS: Framing[] = ["speaker", "center", "fit"];
 
 export interface ScoreBreakdown {
   hook: number;
@@ -246,6 +280,8 @@ export interface ScoreBreakdown {
   emotion: number;
   payoff: number;
   llm: number;
+  /** delivery: audio excitement against the video's baseline, speaking pace, excitement markers */
+  hype?: number;
   energy: number;
   cuts: number;
   scorer: string;

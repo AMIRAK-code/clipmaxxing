@@ -44,11 +44,26 @@ class Settings:
     transcriber: str = os.environ.get("TRANSCRIBER", "auto")  # auto | whisperx | faster-whisper
     hf_token: str = os.environ.get("HF_TOKEN", "")
     # scoring
-    llm_provider: str = os.environ.get("LLM_PROVIDER", "auto")  # auto | anthropic | ollama | none
+    llm_provider: str = os.environ.get("LLM_PROVIDER", "auto")  # auto | anthropic | gemini | openai | custom | ollama | none
     anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
     anthropic_model: str = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
     ollama_url: str = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
     ollama_model: str = os.environ.get("OLLAMA_MODEL", "")
+    # Google Gemini (through its OpenAI-compatible endpoint)
+    gemini_api_key: str = os.environ.get("GEMINI_API_KEY", "")
+    gemini_model: str = os.environ.get("GEMINI_MODEL", "")
+    # a second, freely configurable OpenAI-compatible API: OpenRouter, Groq, DeepSeek, Mistral, xAI, a local server ...
+    custom_base_url: str = os.environ.get("CUSTOM_AI_BASE_URL", "")
+    custom_api_key: str = os.environ.get("CUSTOM_AI_API_KEY", "")
+    custom_model: str = os.environ.get("CUSTOM_AI_MODEL", "")
+    # any OpenAI-compatible chat API: OpenAI, OpenRouter, Groq, LM Studio, llama.cpp server, vLLM ...
+    openai_base_url: str = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    openai_api_key: str = os.environ.get("OPENAI_API_KEY", "")
+    openai_model: str = os.environ.get("OPENAI_MODEL", "")
+    # renderer: auto / fast = FFmpeg when the edit allows it (about 10x faster), studio = always Remotion (Chrome)
+    render_engine: str = os.environ.get("KLIPZ_RENDER_ENGINE", "auto").strip().lower() or "auto"
+    # Smart Edit: automatic jump cuts, punch-in zooms, emphasis, hook card and progress bar on new clips
+    smart_edit: bool = os.environ.get("KLIPZ_SMART_EDIT", "1").strip().lower() not in ("0", "false", "no", "off")
     # optional paid extras – off unless a key is present
     elevenlabs_api_key: str = os.environ.get("ELEVENLABS_API_KEY", "")
     source_retention_days: int = int(os.environ.get("SOURCE_RETENTION_DAYS", "30"))

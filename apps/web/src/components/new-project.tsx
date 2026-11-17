@@ -4,7 +4,7 @@ import { Link2, Loader2, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, Input, Progress } from "@/components/ui/primitives";
+import { Card, Input, Progress, Select } from "@/components/ui/primitives";
 import { api, cn, formatBytes } from "@/lib/utils";
 
 const MAX_BYTES = 5 * 1024 ** 3;
@@ -41,6 +41,7 @@ export function NewProject() {
   const [drag, setDrag] = useState(false);
   const [upload, setUpload] = useState<{ name: string; size: number; progress: number } | null>(null);
   const [url, setUrl] = useState("");
+  const [quality, setQuality] = useState<"auto" | "1080" | "720" | "480">("auto");
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +68,7 @@ export function NewProject() {
     setError(null);
     setImporting(true);
     try {
-      const res = await api<{ project: { id: string } }>("/api/projects", { method: "POST", json: { youtubeUrl: url.trim() } });
+      const res = await api<{ project: { id: string } }>("/api/projects", { method: "POST", json: { youtubeUrl: url.trim(), quality } });
       router.push(`/projects/${res.project.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed");
@@ -141,6 +142,20 @@ export function NewProject() {
               {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Import"}
             </Button>
           </div>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            Quality
+            <Select
+              value={quality}
+              onChange={(e) => setQuality(e.target.value as typeof quality)}
+              aria-label="Download quality"
+              className="h-8 text-xs"
+            >
+              <option value="auto">Auto (1080p, 720p over an hour)</option>
+              <option value="1080">1080p · sharpest clips</option>
+              <option value="720">720p · about half the download</option>
+              <option value="480">480p · fastest, soft clips</option>
+            </Select>
+          </label>
           <p className="text-xs text-muted">Only import videos you own or have permission to reuse.</p>
         </form>
       </div>

@@ -58,7 +58,12 @@ export function splitAt(pieces: VideoPiece[], tOut: number, minLen = 0.05): Vide
   const p = pieces[hit.index]!;
   if (hit.tSrc - p.srcStart < minLen || p.srcEnd - hit.tSrc < minLen) return pieces;
   const left: VideoPiece = { ...p, srcEnd: hit.tSrc };
+  // The new piece starts as a copy of what it was cut from (crop, look, sound level), so a split changes
+  // nothing on screen until one of the halves is edited. The transition belongs to the left half's start.
   const right: VideoPiece = { id: uid("v"), srcStart: hit.tSrc, srcEnd: p.srcEnd };
+  if (p.frame) right.frame = { ...p.frame };
+  if (p.look !== undefined) right.look = p.look;
+  if (p.volume !== undefined) right.volume = p.volume;
   return [...pieces.slice(0, hit.index), left, right, ...pieces.slice(hit.index + 1)];
 }
 
@@ -83,7 +88,12 @@ export function rippleDeleteRange(pieces: VideoPiece[], fromOut: number, toOut: 
       continue;
     }
     if (a < fromOut) out.push({ ...p, srcEnd: p.srcStart + (fromOut - a) });
-    if (b > toOut) out.push({ id: a < fromOut ? uid("v") : p.id, srcStart: p.srcStart + (toOut - a), srcEnd: p.srcEnd });
+    if (b > toOut) {
+      // what is left after the removed range keeps the piece's own crop, look and sound level
+      const rest: VideoPiece = { ...p, id: a < fromOut ? uid("v") : p.id, srcStart: p.srcStart + (toOut - a), srcEnd: p.srcEnd };
+      if (a < fromOut) delete rest.transitionIn; // the transition stays with the part before the removed range
+      out.push(rest);
+    }
   }
   return out.length > 0 ? out : pieces;
 }
@@ -140,6 +150,17 @@ export function wordsToCaptionWords(words: Word[], start: number, end: number): 
     .filter((w) => w.e > start && w.s < end)
     .map((w, i) => ({ id: `w${i}_${Math.round(w.s * 1000)}`, w: w.w.trim(), s: w.s, e: w.e, spk: w.spk }))
     .filter((w) => w.w.length > 0);
+}
+
+/** The look a piece is drawn with: its own, else the clip's. */
+export function pieceLook(edit: Pick<EditState, "look">, piece: Pick<VideoPiece, "look"> | null | undefined): EditState["look"] {
+  return piece?.look ?? edit.look;
+}
+
+/** The main-audio level of a piece before ducking: its own, else the clip's. */
+export function pieceVolume(edit: Pick<EditState, "volume">, piece: Pick<VideoPiece, "volume"> | null | undefined): number {
+  const v = piece?.volume;
+  return typeof v === "number" && Number.isFinite(v) ? Math.min(1.5, Math.max(0, v)) : edit.volume;
 }
 
 /**

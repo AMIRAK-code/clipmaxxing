@@ -1,4 +1,4 @@
-import { decryptToken, encryptToken, type TokenSet } from "@klipz/publishers";
+import { decryptToken, encryptToken, ensureFreshTokens, type Publisher, type PublisherContext, type TokenSet } from "@klipz/publishers";
 import { get, run, nowIso } from "../db";
 import { encryptionKey } from "./config";
 
@@ -39,6 +39,38 @@ export function loadTokens(accountId: string, key: string = encryptionKey()): To
   if (r.refresh_token_enc) tokens.refreshToken = decryptToken(r.refresh_token_enc, key);
   if (r.token_expires_at) tokens.expiresAt = r.token_expires_at;
   return tokens;
+}
+
+const g = globalThis as unknown as { __klipzTokenLocks?: Map<string, Promise<unknown>> };
+const tokenLocks: Map<string, Promise<unknown>> = (g.__klipzTokenLocks ??= new Map());
+
+/** Run `fn` with no other withAccountLock(accountId) call running at the same time in this process. */
+export async function withAccountLock<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = tokenLocks.get(accountId) ?? Promise.resolve();
+  const task = prev.catch(() => undefined).then(fn);
+  const tail = task.catch(() => undefined);
+  tokenLocks.set(accountId, tail);
+  try {
+    return await task;
+  } finally {
+    if (tokenLocks.get(accountId) === tail) tokenLocks.delete(accountId);
+  }
+}
+
+/**
+ * Stored tokens for an account, refreshed first when they are about to expire (undefined when none
+ * are stored). One refresh per account at a time: refresh tokens may rotate (X accepts each one only
+ * once), so two parallel refreshes with the same token would fail one of them and flag the account
+ * for reconnection. Tokens are re-read inside the lock, so a waiting caller uses the new ones.
+ */
+export function freshTokens(accountId: string, publisher: Publisher, ctx: PublisherContext, key?: string): Promise<TokenSet | undefined> {
+  return withAccountLock(accountId, async () => {
+    const stored = loadTokens(accountId, key);
+    if (!stored) return undefined;
+    const fresh = await ensureFreshTokens(publisher, ctx, stored);
+    if (fresh.refreshed) saveTokens(accountId, fresh.tokens, key); // persist rotated tokens immediately
+    return fresh.tokens;
+  });
 }
 
 /** Persist a (rotated) token set. A missing refresh token keeps the stored one. */

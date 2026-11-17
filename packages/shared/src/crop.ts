@@ -1,4 +1,4 @@
-import type { CropKey, CropSegment, CropTrack } from "./types";
+import { MAX_FRAME_ZOOM, type CropKey, type CropSegment, type CropTrack, type EditState, type ManualFrame, type VideoPiece } from "./types";
 
 export interface Rect {
   x: number;
@@ -105,11 +105,54 @@ export function layoutAt(track: CropTrack | null, t: number, outW: number, outH:
     };
   }
   const c = interpolateKeys(seg.keys, t);
+  const zoom = Math.min(MAX_FRAME_ZOOM, Math.max(1, seg.zoom ?? 1));
   return {
     layout: "crop",
-    panes: [{ dst: { x: 0, y: 0, w: outW, h: outH }, src: windowAround(srcW, srcH, outAspect, c.cx, c.cy) }],
+    panes: [{ dst: { x: 0, y: 0, w: outW, h: outH }, src: windowAround(srcW, srcH, outAspect, c.cx, c.cy, zoom) }],
     blurredBackground: false,
   };
+}
+
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0.5));
+
+/** Normalise a manual frame coming from the editor or from stored JSON. */
+export function cleanFrame(frame: ManualFrame): ManualFrame {
+  return {
+    layout: frame.layout === "letterbox" ? "letterbox" : "crop",
+    cx: clamp01(frame.cx),
+    cy: clamp01(frame.cy),
+    zoom: Math.min(MAX_FRAME_ZOOM, Math.max(1, Number.isFinite(frame.zoom) ? frame.zoom : 1)),
+  };
+}
+
+/** A crop track that shows the same manual window for the whole clip. */
+export function manualCropTrack(frame: ManualFrame, srcW: number, srcH: number): CropTrack {
+  const f = cleanFrame(frame);
+  return {
+    version: 1,
+    srcW,
+    srcH,
+    segments: [{ start: 0, end: Number.MAX_SAFE_INTEGER, layout: f.layout, keys: [{ t: 0, cx: f.cx, cy: f.cy }], zoom: f.zoom }],
+  };
+}
+
+/** The crop track a clip is drawn with: the manual frame when the editor set one, else the automatic track. */
+export function effectiveCropTrack(edit: Pick<EditState, "frame">, track: CropTrack | null, srcW: number, srcH: number): CropTrack | null {
+  return edit.frame ? manualCropTrack(edit.frame, srcW, srcH) : track;
+}
+
+/**
+ * The crop track one piece of the clip is drawn with. After a split every piece can have its own crop:
+ * the piece's frame first, then the clip's manual frame, then the automatic track.
+ */
+export function pieceCropTrack(
+  edit: Pick<EditState, "frame">,
+  piece: Pick<VideoPiece, "frame"> | null | undefined,
+  track: CropTrack | null,
+  srcW: number,
+  srcH: number,
+): CropTrack | null {
+  return piece?.frame ? manualCropTrack(piece.frame, srcW, srcH) : effectiveCropTrack(edit, track, srcW, srcH);
 }
 
 /**

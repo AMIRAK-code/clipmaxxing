@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import bisect
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+import threading
+import time
 import wave
 from functools import lru_cache
 from pathlib import Path
@@ -17,6 +22,64 @@ import numpy as np
 
 class FfmpegError(RuntimeError):
     pass
+
+
+# An ffmpeg run that prints nothing for this long is hung (a stuck network drive, a broken file that
+# makes the decoder spin): it is stopped so the single worker can go on with other jobs.
+STALL_SEC = float(os.environ.get("KLIPZ_FFMPEG_STALL_SEC", "300"))
+PROBE_TIMEOUT_SEC = 120.0
+DECODE_TIMEOUT_SEC = 1800.0
+
+
+def kill_process(proc: subprocess.Popen) -> None:
+    """Stop a child process and everything it started (taskkill /T on Windows); never raises."""
+    if proc.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            proc.kill()
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+class _StallWatch:
+    """Kills `proc` when touch() has not been called for `stall_sec` seconds."""
+
+    def __init__(self, proc: subprocess.Popen, stall_sec: Optional[float] = None):
+        self.proc = proc
+        self.stall_sec = STALL_SEC if stall_sec is None else stall_sec
+        self.last = time.monotonic()
+        self.fired = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._watch, name="ffmpeg-stall-watch", daemon=True)
+        self._thread.start()
+
+    def touch(self) -> None:
+        self.last = time.monotonic()
+
+    def _watch(self) -> None:
+        while not self._stop.wait(min(5.0, self.stall_sec)):
+            if self.proc.poll() is not None:
+                return
+            if time.monotonic() - self.last > self.stall_sec:
+                self.fired = True
+                kill_process(self.proc)
+                return
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def error(self) -> FfmpegError:
+        return FfmpegError(f"ffmpeg made no progress for {self.stall_sec:.0f} s and was stopped")
 
 
 @lru_cache(maxsize=1)
@@ -36,21 +99,32 @@ def run_ffmpeg(
     duration: Optional[float] = None,
     on_progress: Optional[Callable[[float], None]] = None,
 ) -> str:
-    """Run ffmpeg; returns stderr. Reports 0..1 progress when duration is known."""
+    """Run ffmpeg; returns stderr. Reports 0..1 progress when duration is known.
+
+    The process is always stopped when this returns or raises (e.g. JobCancelled from on_progress), and
+    it is stopped if it prints nothing for STALL_SEC (ffmpeg's stats line normally updates twice a second)."""
     cmd = [binaries()[0], "-hide_banner", "-nostdin", "-y", *args]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+    watch = _StallWatch(proc)
     tail: list[str] = []
     assert proc.stderr is not None
-    for line in proc.stderr:
-        tail.append(line)
-        if len(tail) > 400:
-            del tail[:200]
-        if on_progress and duration:
-            m = re.search(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", line)
-            if m:
-                t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                on_progress(min(1.0, t / duration))
-    code = proc.wait()
+    try:
+        for line in proc.stderr:
+            watch.touch()
+            tail.append(line)
+            if len(tail) > 400:
+                del tail[:200]
+            if on_progress and duration:
+                m = re.search(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", line)
+                if m:
+                    t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                    on_progress(min(1.0, t / duration))
+        code = proc.wait()
+    finally:
+        watch.stop()
+        kill_process(proc)
+    if watch.fired:
+        raise watch.error()
     out = "".join(tail)
     if code != 0:
         raise FfmpegError(f"ffmpeg exited {code}: {out[-1500:]}")
@@ -59,7 +133,10 @@ def run_ffmpeg(
 
 def probe(path: Path | str) -> dict:
     cmd = [binaries()[1], "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)]
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired as e:
+        raise FfmpegError(f"ffprobe did not answer within {PROBE_TIMEOUT_SEC:.0f} s") from e
     if res.returncode != 0:
         raise FfmpegError(f"ffprobe failed: {res.stderr[-800:]}")
     data = json.loads(res.stdout)
@@ -153,21 +230,145 @@ def pick_cuts(scores: list[tuple[float, float]], strong: float = SCENE_STRONG) -
     return merged
 
 
-def scene_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None) -> list[tuple[float, float]]:
-    """(time, scene score) for every proxy frame."""
-    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-i", str(src), "-an", "-vf",
-           f"fps={SCENE_FPS},scale=320:-2,select='gte(scene,0)',metadata=print:file=-", "-f", "null", "-"]
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
-    if res.returncode != 0:
-        raise FfmpegError(f"ffmpeg exited {res.returncode}: {res.stderr[-1500:]}")
+def _frame_values(args: list[str], key: str, on_time: Optional[Callable[[float], None]] = None) -> list[tuple[float, float]]:
+    """Run ffmpeg with a `metadata=print:file=-` filter and collect (pts_time, value of `key`) per frame.
+    Read as it is produced, so `on_time` gets the timestamp reached while a long scan is still running."""
+    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-loglevel", "error", *args, "-f", "null", "-"]
+    out: list[tuple[float, float]] = []
+    with tempfile.TemporaryFile() as err:  # a damaged file can print megabytes of warnings: never a pipe
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True, errors="replace")
+        watch = _StallWatch(proc)
+        assert proc.stdout is not None
+        t: Optional[float] = None
+        prefix = key + "="
+        try:
+            for line in proc.stdout:
+                watch.touch()
+                if line.startswith("frame:"):
+                    m = re.search(r"pts_time:(-?[0-9.]+)", line)
+                    t = float(m.group(1)) if m else None
+                    if t is not None and on_time:
+                        on_time(t)  # may raise JobCancelled: the finally below stops ffmpeg
+                elif t is not None and line.startswith(prefix):
+                    try:
+                        out.append((t, float(line[len(prefix):])))
+                    except ValueError:
+                        pass
+            code = proc.wait()
+        finally:
+            watch.stop()
+            kill_process(proc)
+        if watch.fired:
+            raise watch.error()
+        if code != 0:
+            err.seek(0)
+            raise FfmpegError(f"ffmpeg exited {code}: {err.read().decode(errors='replace')[-1500:]}")
+    return out
+
+
+def scene_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None, *,
+                 start: Optional[float] = None, length: Optional[float] = None,
+                 duration: Optional[float] = None) -> list[tuple[float, float]]:
+    """(time, scene score) for every proxy frame of the whole file, or of `length` seconds from `start`.
+    Every frame is decoded: exact, but slow for 4K / 60 fps / AV1 sources (see keyframe_scores)."""
+    window = ["-ss", f"{max(0.0, start):.3f}"] if start is not None else []
+    if length is not None:
+        window += ["-t", f"{max(0.1, length):.3f}"]
+    span = length or duration
+    offset = max(0.0, start or 0.0)
+    rows = _frame_values(
+        [*window, "-i", str(src), "-an", "-vf", f"fps={SCENE_FPS},scale=320:-2,select='gte(scene,0)',metadata=print:file=-"],
+        "lavfi.scene_score",
+        (lambda t: on_progress(min(1.0, t / span))) if on_progress and span else None,
+    )
     if on_progress:
         on_progress(1.0)
-    return [(float(t), float(s)) for t, s in re.findall(r"pts_time:([0-9.]+)\s+lavfi\.scene_score=([0-9.]+)", res.stdout)]
+    return [(round(t + offset, 3), s) for t, s in rows]
 
 
-def scene_cuts(src: Path, threshold: float = SCENE_STRONG, on_progress: Optional[Callable[[float], None]] = None) -> list[float]:
+def scene_cuts(src: Path, threshold: float = SCENE_STRONG, on_progress: Optional[Callable[[float], None]] = None,
+               duration: Optional[float] = None) -> list[float]:
     """Timestamps (s) of shot changes (see the rule above). `threshold` is the strong-cut level."""
-    return pick_cuts(scene_scores(src, on_progress), threshold)
+    return pick_cuts(scene_scores(src, on_progress, duration=duration), threshold)
+
+
+def scene_cuts_between(src: Path, start: float, end: float) -> list[float]:
+    """Exact shot changes inside [start, end]: only that stretch is decoded (a second of margin each side
+    for the neighbourhood rule)."""
+    s0 = max(0.0, start - 1.0)
+    scores = scene_scores(src, start=s0, length=end - s0 + 1.0)
+    # the first frame of a window has nothing before it; its score says nothing
+    return [c for c in pick_cuts(scores[1:]) if start <= c <= end]
+
+
+# ── quick shot detection for import ───────────────────────────────────────────────────────────
+# Decoding every frame costs 2x real time for 4K 60 fps HEVC and 7x for 1080p AV1 on a laptop CPU: a
+# 5 minute phone video sat on "Detecting shot changes" for two and a half minutes. Import only needs to
+# know roughly how often the picture cuts (pacing score), so it reads the keyframes alone (`-discard
+# nokey`: the other packets never reach the decoder). Measured: 2.7 s instead of 143 s for that phone
+# video, 0.5 s instead of 26 s for a 2.7 minute AV1 music video. Encoders put a keyframe on a hard cut,
+# so the times are usually exact as well; where exactness matters (the crop switching on the cut inside
+# a rendered clip) scene_cuts_between() looks at that clip's stretch frame by frame.
+COARSE_MAX_GAP = 8.0  # average seconds between keyframes above which keyframes say too little
+COARSE_BIG = 0.15  # mean luma difference (0..1) between two keyframes that is a different picture outright
+
+
+def keyframe_scores(src: Path, on_progress: Optional[Callable[[float], None]] = None,
+                    duration: Optional[float] = None) -> list[tuple[float, float]]:
+    """(time, mean luma difference 0..1 against the keyframe before it) per keyframe."""
+    rows = _frame_values(
+        ["-discard", "nokey", "-i", str(src), "-an", "-fps_mode", "passthrough",
+         "-vf", "scale=320:-2,scdet=threshold=0,metadata=print:file=-"],
+        "lavfi.scd.mafd",
+        (lambda t: on_progress(min(1.0, t / duration))) if on_progress and duration else None,
+    )
+    return [(round(t, 3), d / 100.0) for t, d in rows]
+
+
+def pick_coarse_cuts(diffs: list[tuple[float, float]]) -> list[float]:
+    """Pure: keyframe differences -> shot-change times. A keyframe counts when the picture differs
+    outright from the one before (COARSE_BIG), or when the difference jumps against the previous one
+    (ffmpeg's own scene score, min(diff, change of diff) >= SCENE_MIN): steady motion keeps the
+    difference level and is not a cut, a new picture is."""
+    cuts: list[float] = []
+    prev = 0.0
+    for i, (t, d) in enumerate(sorted(diffs)):
+        jump = min(d, abs(d - prev))
+        prev = d
+        if i == 0 or t < 0.2:
+            continue
+        if (d >= COARSE_BIG or jump >= SCENE_MIN) and (not cuts or t - cuts[-1] >= SCENE_MERGE):
+            cuts.append(round(t, 3))
+    return cuts
+
+
+def quick_scene_cuts(src: Path, duration: float, on_progress: Optional[Callable[[float], None]] = None) -> tuple[list[float], str]:
+    """(cuts, "coarse" | "full"). Keyframes when the file has enough of them, every frame otherwise."""
+    try:
+        frames = keyframe_scores(src, (lambda p: on_progress(0.9 * p)) if on_progress else None, duration)
+    except FfmpegError:
+        frames = []
+    if len(frames) >= 3 and duration / len(frames) <= COARSE_MAX_GAP:
+        if on_progress:
+            on_progress(1.0)
+        return pick_coarse_cuts(frames), "coarse"
+    return scene_cuts(src, on_progress=on_progress, duration=duration), "full"
+
+
+def decode_mono_16k(path: Path | str) -> np.ndarray:
+    """Any audio/video file -> float32 mono samples at 16 kHz (what Whisper takes), decoded by our own ffmpeg.
+
+    faster-whisper would otherwise decode the file itself through PyAV, and its call breaks whenever PyAV
+    changes its API (PyAV 19 removed `metadata_errors`: "open() got an unexpected keyword argument")."""
+    cmd = [binaries()[0], "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
+           "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=DECODE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired as e:  # subprocess.run kills the child on timeout
+        raise FfmpegError(f"ffmpeg did not finish decoding the audio within {DECODE_TIMEOUT_SEC:.0f} s") from e
+    if proc.returncode != 0:
+        raise FfmpegError(f"ffmpeg could not decode the audio: {proc.stderr.decode(errors='replace')[-800:]}")
+    return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
@@ -181,16 +382,58 @@ def read_wav(path: Path) -> tuple[np.ndarray, int]:
     return audio, sr
 
 
+ENERGY_VERSION = 2
+
+
 def audio_energy(wav: Path, hop: float = 0.5) -> dict:
-    """RMS loudness per hop, normalised to 0..1 against the 95th percentile."""
+    """Per-hop audio features, each normalised to 0..1 (v = ENERGY_VERSION):
+
+    rms     loudness against the video's 95th percentile
+    bright  spectral centroid: raised, shouted or laughing voices and cheering are brighter than calm speech
+    flux    spectral change between neighbouring frames: bursts, laughter, crowd noise, fast delivery
+
+    `bright` and `flux` are what the hype score listens to beyond plain loudness (steps/features.py)."""
     audio, sr = read_wav(wav)
     n = max(1, int(sr * hop))
     frames = len(audio) // n
     if frames == 0:
-        return {"hop": hop, "rms": []}
-    rms = np.sqrt((audio[: frames * n].reshape(frames, n) ** 2).mean(axis=1))
+        return {"v": ENERGY_VERSION, "hop": hop, "rms": [], "bright": [], "flux": []}
+    hops = audio[: frames * n].reshape(frames, n)
+    rms = np.sqrt((hops ** 2).mean(axis=1))
     ref = float(np.percentile(rms, 95)) or 1.0
-    return {"hop": hop, "rms": [round(float(x), 4) for x in np.clip(rms / ref, 0, 1)]}
+    out = {"v": ENERGY_VERSION, "hop": hop, "rms": [round(float(x), 4) for x in np.clip(rms / ref, 0, 1)]}
+
+    win = 1024
+    k = n // win  # spectrum frames per hop
+    if k < 1:
+        return {**out, "bright": [], "flux": []}
+    window = np.hanning(win).astype(np.float32)
+    freqs = np.fft.rfftfreq(win, 1.0 / sr).astype(np.float32)
+    centroid = np.zeros(frames, dtype=np.float32)
+    flux = np.zeros(frames, dtype=np.float32)
+    step = 1500  # hops per chunk: bounds memory on long videos
+    for h0 in range(0, frames, step):
+        chunk = hops[h0 : h0 + step, : k * win].reshape(-1, k, win) * window
+        spec = np.abs(np.fft.rfft(chunk, axis=2)).astype(np.float32)           # (hops, k, bins)
+        power = spec.sum(axis=2) + 1e-9
+        cen = (spec * freqs).sum(axis=2) / power                                # Hz per frame
+        centroid[h0 : h0 + len(chunk)] = (cen * power).sum(axis=1) / power.sum(axis=1)
+        logm = np.log1p(spec.reshape(-1, spec.shape[2]) * 50.0)
+        d = np.maximum(0.0, np.diff(logm, axis=0)).mean(axis=1)                 # rise in log-magnitude
+        d = np.concatenate([[0.0], d]).reshape(-1, k)
+        flux[h0 : h0 + len(chunk)] = d.mean(axis=1)
+    voiced = rms > 0.05 * ref
+    if voiced.any():
+        lo, hi = np.percentile(centroid[voiced], [10, 95])
+        bright = np.where(voiced, np.clip((centroid - lo) / max(1e-6, hi - lo), 0, 1), 0.0)
+        fref = float(np.percentile(flux[voiced], 95)) or 1.0
+        fl = np.where(voiced, np.clip(flux / fref, 0, 1), 0.0)
+    else:
+        bright = np.zeros(frames)
+        fl = np.zeros(frames)
+    out["bright"] = [round(float(x), 3) for x in bright]
+    out["flux"] = [round(float(x), 3) for x in fl]
+    return out
 
 
 def extract_frame(src: Path, t: float, dst: Path, width: int = 540) -> None:

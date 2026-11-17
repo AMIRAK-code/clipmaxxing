@@ -75,7 +75,7 @@ export function startConnect(
     ...(args.ttlSec !== undefined ? { ttlSec: args.ttlSec } : {}),
     ...(ctx.now ? { now: ctx.now } : {}),
   });
-  const pkce = createPkce();
+  const pkce = createPkce(publisher.pkceEncoding ?? 'base64url');
   const authUrl = publisher.getAuthUrl(ctx, { state, codeChallenge: pkce.codeChallenge });
   return { authUrl, state, codeVerifier: pkce.codeVerifier };
 }

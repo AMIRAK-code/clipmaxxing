@@ -171,6 +171,21 @@ export const FONT_FILES: Record<string, { file: string; weight: number }[]> = {
   "Bebas Neue": [{ file: "bebas-neue-400.woff2", weight: 400 }],
 };
 
+/**
+ * Drawn for the characters a caption font does not have: Arabic script (Persian, Arabic, Urdu, Kurdish).
+ * One heavy weight serves every caption style; both renderers load it so they draw the same glyphs.
+ */
+export const FALLBACK_FONT: { family: string; file: string; weight: number } = {
+  family: "Vazirmatn",
+  file: "vazirmatn-900.woff2",
+  weight: 900,
+};
+
+/** CSS font-family value for text in `family`: the font, then the script fallback, then the system. */
+export function fontStack(family: string): string {
+  return `"${family}", "${FALLBACK_FONT.family}", sans-serif`;
+}
+
 export function resolveCaptionStyle(
   styleId: string,
   overrides: Partial<CaptionStyle> = {},

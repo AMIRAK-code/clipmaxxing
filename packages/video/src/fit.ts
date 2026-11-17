@@ -1,4 +1,4 @@
-import type { CaptionStyle } from "@klipz/shared";
+import { fontStack, hasCursiveScript, type CaptionStyle } from "@klipz/shared";
 
 /** Scale factor (<= 1) that makes `measured` fit into `max`. Never scales up. */
 export function fitScale(measured: number, max: number): number {
@@ -22,9 +22,10 @@ function getCtx(): CanvasRenderingContext2D | null {
 /** Width in px of a string. Uses canvas when available, a conservative estimate otherwise. */
 export function measureText(text: string, font: TextFont): number {
   const c = getCtx();
-  const extra = font.letterSpacing * font.fontSize * text.length;
+  // joined scripts (Arabic) are drawn without letter-spacing
+  const extra = hasCursiveScript(text) ? 0 : font.letterSpacing * font.fontSize * text.length;
   if (c) {
-    c.font = `${font.fontWeight} ${font.fontSize}px "${font.fontFamily}", sans-serif`;
+    c.font = `${font.fontWeight} ${font.fontSize}px ${fontStack(font.fontFamily)}`;
     return c.measureText(text).width + extra;
   }
   return text.length * font.fontSize * 0.62 + extra;

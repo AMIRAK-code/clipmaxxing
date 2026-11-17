@@ -16,7 +16,7 @@ from .. import ffmpeg
 from ..reframe.detect import Detector, default_detector
 from ..reframe.planner import PlanConfig, Sample, plan_track
 from ..runner import JobContext, PermanentError
-from .ingest import source_file
+from .ingest import clip_cuts, source_file
 
 log = logging.getLogger("klipz.reframe")
 
@@ -103,6 +103,46 @@ def words_in_range(transcript: Optional[dict[str, Any]], start: float, end: floa
     return [w for w in transcript.get("words") or [] if float(w["e"]) > start and float(w["s"]) < end]
 
 
+def _refresh_smart_edit(ctx: JobContext, clip: dict[str, Any]) -> None:
+    """A clip whose automatic edit was dropped because its range changed (trim) gets a fresh one.
+    Only clips the person never edited (edit_version 0, no edit) are touched."""
+    if not ctx.settings.smart_edit or clip.get("edit_state") is not None or int(clip.get("edit_version") or 0) != 0:
+        return
+    try:
+        from . import smart_edit
+
+        tr = ctx.db.one("transcripts", "select * from transcripts where source_video_id = ?", clip["source_video_id"])
+        if not tr or not tr.get("words"):
+            return
+        edit = smart_edit.build_edit(
+            tr["words"], float(clip["start_sec"]), float(clip["end_sec"]),
+            keywords=(clip.get("score_breakdown") or {}).get("keywords") or [],
+            hook=clip.get("hook"), style_id=clip.get("caption_style_id") or None,
+        )
+        ctx.db.update("clips", clip["id"], {"edit_state": edit})
+        clip["edit_state"] = edit
+    except Exception as e:  # noqa: BLE001
+        log.warning("smart edit refresh failed for clip %s (%s)", clip.get("id"), e)
+
+
+FRAMINGS = ("speaker", "center", "fit")
+
+
+def framing_of(source: dict[str, Any]) -> str:
+    v = str(source.get("framing") or "speaker").lower()
+    return v if v in FRAMINGS else "speaker"
+
+
+def static_track(framing: str, start: float, end: float, src_w: int, src_h: int) -> dict[str, Any]:
+    """Crop track for the framings that do not look at the picture: `center` fills the screen with the
+    middle of the frame (gameplay, screen recordings), `fit` shows the whole frame over a blurred copy."""
+    if framing == "fit":
+        seg: dict[str, Any] = {"start": start, "end": end, "layout": "letterbox", "keys": []}
+    else:
+        seg = {"start": start, "end": end, "layout": "crop", "keys": [{"t": start, "cx": 0.5, "cy": 0.5}]}
+    return {"version": 1, "srcW": int(src_w), "srcH": int(src_h), "segments": [seg]}
+
+
 def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Optional[Detector] = None,
             cfg: Optional[PlanConfig] = None) -> dict[str, Any]:
     """Compute and store clips.crop_track. Returns the track. Skips when one exists unless force."""
@@ -110,6 +150,7 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
     clip = db.get("clips", clip_id)
     if clip is None:
         raise PermanentError(f"clip {clip_id} was deleted; nothing to reframe")
+    _refresh_smart_edit(ctx, clip)
     if clip.get("crop_track") and not force:
         ctx.progress(1.0, "Reframe already done", force=True)
         return clip["crop_track"]
@@ -124,6 +165,14 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
     src_w, src_h = int(source["width"]), int(source["height"])
     start, end = float(clip["start_sec"]), float(clip["end_sec"])
 
+    framing = framing_of(source)
+    if framing != "speaker":
+        # The person turned "keep the speaker centred" off for this video: no face tracking.
+        track = static_track(framing, start, end, src_w, src_h)
+        db.update("clips", clip_id, {"crop_track": track})
+        ctx.progress(1.0, "Reframed", force=True)
+        return track
+
     ctx.progress(0.02, "Reframing: finding faces", force=True)
     det = detector or default_detector(ctx.settings.data_dir)
     try:
@@ -137,7 +186,7 @@ def reframe(ctx: JobContext, clip_id: str, force: bool = False, detector: Option
     transcript = db.one("transcripts", "select * from transcripts where source_video_id = ?", source["id"])
     track, infos = plan_track(
         start=start, end=end, src_w=src_w, src_h=src_h, samples=samples,
-        cuts=source.get("scene_cuts") or [], words=words_in_range(transcript, start, end), cfg=cfg,
+        cuts=clip_cuts(ctx, source, start, end), words=words_in_range(transcript, start, end), cfg=cfg,
     )
     ctx.progress(0.95, "Reframing: saving crop track", force=True)
     # Persist without bumping edit_version: the crop track is derived data.

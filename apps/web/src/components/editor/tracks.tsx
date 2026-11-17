@@ -61,6 +61,15 @@ export function VideoRow() {
             <span className="pointer-events-none block truncate px-2 pt-1 font-semibold">
               {i + 1} · {pieceDuration(p).toFixed(1)}s
             </span>
+            {p.frame || p.look !== undefined || p.volume !== undefined ? (
+              <span
+                className="pointer-events-none absolute right-2 top-1 rounded bg-black/50 px-1 text-[9px] uppercase"
+                title="This piece has its own crop, look or volume"
+                data-piece-own
+              >
+                {[p.frame ? "crop" : "", p.look !== undefined ? "look" : "", p.volume !== undefined ? "vol" : ""].filter(Boolean).join(" · ")}
+              </span>
+            ) : null}
             {p.transitionIn && p.transitionIn.type !== "none" ? (
               <span className="pointer-events-none absolute bottom-0.5 left-2 rounded bg-black/50 px-1 text-[9px] uppercase">{p.transitionIn.type}</span>
             ) : null}
