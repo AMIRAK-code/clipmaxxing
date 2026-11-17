@@ -18,13 +18,19 @@ from typing import Any, Optional, Sequence
 from . import heuristics as H
 
 # ── tuning ────────────────────────────────────────────────────────────────
-MAX_GAP = 0.45          # silence longer than this between two words is cut ...
+MAX_GAP = 0.7           # silence longer than this between two words is cut ...
 MIN_OUTPUT = 15.0       # ... but never so much that the finished clip drops under this (when it started above it)
-RELAXED_GAPS = (0.8, 1.2, 2.0)
-KEEP_PAD = 0.12         # ... keeping this much air on each side so speech is never clipped
+RELAXED_GAPS = (1.0, 1.5, 2.0)
+# ... keeping air on both sides of the cut. Whisper's word times are tight and its word ends tend to be
+# early (the last sound of a word, a breath or the room's decay come after), so more is kept after speech
+# than before it: cutting right at the word times is what makes a jump cut sound chopped.
+LEAD_PAD = 0.15         # before speech starts again
+TAIL_PAD = 0.28         # after speech stops
+MIN_CUT = 0.25          # a cut that would remove less than this is not worth the jump
 MIN_PIECE = 0.35        # never leave a sliver shorter than this
 FILLER_WORDS = {"um", "uh", "uhm", "umm", "er", "erm", "hmm", "mm", "ah"}
-FILLER_MIN_GAP = 0.08   # a filler is only cut when there is a little silence on both sides (clean cut)
+FILLER_MIN_GAP = 0.12   # a filler is only cut when there is a little silence on both sides (clean cut)
+FILLER_CLEAR = 0.03     # the air kept around a cut never reaches into the filler that was cut out
 CUT_ZOOM = 1.07         # alternate framing on jump cuts
 PUNCH_ZOOM = 1.16       # emphasis punch-in
 PUNCH_HOLD = 1.1
@@ -45,32 +51,42 @@ def _r(x: float) -> float:
 
 def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float, max_gap: float = MAX_GAP,
                 drop_fillers: bool = True) -> list[tuple[float, float]]:
-    """Source-time ranges to keep: the clip minus silences longer than `max_gap` and isolated filler words."""
+    """Source-time ranges to keep: the clip minus silences longer than `max_gap` and isolated filler words.
+    Every cut keeps LEAD_PAD of air before the speech that follows it and TAIL_PAD after the speech before
+    it; a cut that would remove less than MIN_CUT is not made."""
     ws = [w for w in words if w["e"] > start and w["s"] < end]
     if not ws:
         return [(start, end)]
     spoken: list[tuple[float, float]] = []
+    dropped: list[tuple[float, float]] = []
     for i, w in enumerate(ws):
         if _norm(str(w["w"])) in FILLER_WORDS:
             before = w["s"] - (ws[i - 1]["e"] if i > 0 else start)
             after = (ws[i + 1]["s"] if i + 1 < len(ws) else end) - w["e"]
             if drop_fillers and before >= FILLER_MIN_GAP and after >= FILLER_MIN_GAP:
+                dropped.append((float(w["s"]), float(w["e"])))
                 continue  # drop it: the gap it leaves is closed below
         spoken.append((max(start, float(w["s"])), min(end, float(w["e"]))))
     if not spoken:
         return [(start, end)]
     ranges: list[list[float]] = []
     for s, e in spoken:
-        if ranges and s - ranges[-1][1] <= max_gap:
+        if ranges and s - ranges[-1][1] <= max_gap and not any(ranges[-1][1] <= f0 < s for f0, _f1 in dropped):
             ranges[-1][1] = max(ranges[-1][1], e)
         else:
             ranges.append([s, e])
     out: list[tuple[float, float]] = []
-    for i, (s, e) in enumerate(ranges):
-        lo = max(start, s - KEEP_PAD)
-        hi = min(end, e + KEEP_PAD)
-        if out and lo <= out[-1][1]:  # pads touch: merge
-            out[-1] = (out[-1][0], hi)
+    for s, e in ranges:
+        lo = max(start, s - LEAD_PAD)
+        hi = min(end, e + TAIL_PAD)
+        # the air around a cut must not bring back the filler that was cut out
+        for f0, f1 in dropped:
+            if e <= f0 and hi > f0 - FILLER_CLEAR:
+                hi = max(e, f0 - FILLER_CLEAR)
+            if f1 <= s and lo < f1 + FILLER_CLEAR:
+                lo = min(s, f1 + FILLER_CLEAR)
+        if out and lo - out[-1][1] < MIN_CUT and not any(out[-1][1] <= f0 and f1 <= lo for f0, f1 in dropped):
+            out[-1] = (out[-1][0], hi)  # too little to cut: keep the pause as it is
         else:
             out.append((lo, hi))
     # absorb slivers into a neighbour rather than flashing a few frames

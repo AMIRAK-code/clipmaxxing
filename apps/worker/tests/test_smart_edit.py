@@ -29,10 +29,34 @@ def test_keep_ranges_cuts_silence_and_isolated_filler():
     ranges = se.keep_ranges(WORDS, 9.5, 15.5)
     assert len(ranges) == 2
     (a0, a1), (b0, b1) = ranges
-    assert a0 == pytest.approx(10.0 - se.KEEP_PAD) and a1 == pytest.approx(10.9 + se.KEEP_PAD)
-    assert b0 == pytest.approx(13.0 - se.KEEP_PAD) and b1 == pytest.approx(14.9 + se.KEEP_PAD)
+    assert a0 == pytest.approx(10.0 - se.LEAD_PAD) and a1 == pytest.approx(10.9 + se.TAIL_PAD)
+    assert b0 == pytest.approx(13.0 - se.LEAD_PAD) and b1 == pytest.approx(14.9 + se.TAIL_PAD)
     # the "um" at 12.3 is in neither piece
     assert not any(lo <= 12.4 <= hi for lo, hi in ranges)
+
+
+def test_cuts_leave_more_air_after_speech_than_before_it():
+    words = [W("first", 1.0, 1.5), W("part.", 1.55, 2.0), W("second", 3.5, 4.0), W("part.", 4.05, 4.5)]
+    (a0, a1), (b0, b1) = se.keep_ranges(words, 0.5, 5.0)
+    assert a1 - 2.0 == pytest.approx(se.TAIL_PAD) and 3.5 - b0 == pytest.approx(se.LEAD_PAD)
+    assert se.TAIL_PAD > se.LEAD_PAD >= 0.15
+
+
+def test_short_pauses_are_not_cut():
+    # 0.6 s pauses: under MAX_GAP, nothing is cut
+    words = [W("a", 0.0, 0.3), W("b", 0.9, 1.2), W("c", 1.8, 2.1)]
+    assert se.keep_ranges(words, 0.0, 2.2) == [(0.0, 2.2)]
+    # a pause just over MAX_GAP is cut, and what it removes is at least MIN_CUT
+    words = [W("a", 0.0, 0.3), W("b", 1.05, 1.3)]
+    (a0, a1), (b0, b1) = se.keep_ranges(words, 0.0, 1.4)
+    assert b0 - a1 >= se.MIN_CUT
+
+
+def test_air_around_a_cut_filler_does_not_bring_it_back():
+    words = [W("so", 1.0, 1.3), W("um", 1.45, 1.7), W("anyway", 1.85, 2.3)]
+    ranges = se.keep_ranges(words, 0.9, 2.5)
+    assert len(ranges) == 2
+    assert ranges[0][1] <= 1.45 - se.FILLER_CLEAR + 1e-9 and ranges[1][0] >= 1.7 + se.FILLER_CLEAR - 1e-9
 
 
 def test_keep_ranges_never_exceeds_clip_and_keeps_filler_inside_speech():
@@ -165,12 +189,12 @@ def test_openai_compat_scorer_parses_reply():
 
 
 def test_cuts_never_take_a_clip_under_the_15_s_minimum():
-    # 16.5 s of speech in short bursts with 0.6 s pauses: the usual cuts would leave about 11 s
+    # 20.9 s of speech in short bursts with 1 s pauses: the usual cuts would leave about 14.6 s
     words, t0 = [], 0.0
     for i in range(11):
         words += [W(f"a{i}", t0, t0 + 0.4), W(f"b{i}.", t0 + 0.45, t0 + 0.9)]
-        t0 += 1.5
-    start, end = 0.0, 16.5
+        t0 += 1.9
+    start, end = 0.0, 20.9
     assert sum(e - s for s, e in se.keep_ranges(words, start, end)) < 15
     fitted = se.fitted_ranges(words, start, end)
     assert sum(e - s for s, e in fitted) >= 15

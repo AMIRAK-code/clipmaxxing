@@ -2,6 +2,7 @@
 boundaries."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -16,8 +17,12 @@ MAX_CANDIDATES = 60   # floor of the candidate pool; long videos get more (pool_
 MAX_POOL = 600
 PAUSE_BREAK = 0.8
 MAX_SENTENCE = 25.0
-PAD_START = 0.15
-PAD_END = 0.25
+PAD_START = 0.2       # air before the first word (less when the previous word is closer than twice this)
+PAD_END = 0.5         # air after the last word, so the ending can land (same limit)
+LONG_PAUSE = 1.5      # a pause this long ends a thought even without a full stop
+ANSWER_PAUSE = 3.0    # ... but people think a while before answering a question
+PUNCTUATED = 0.3      # share of sentences ending in . ! ? that marks a transcript as punctuated
+QUESTION_END_RE = re.compile(r"[?؟？][\"')\]»”’]*$")
 
 
 @dataclass
@@ -112,9 +117,41 @@ def _cheap_score(c: Candidate) -> float:
     return 0.42 * first + 0.18 * clean + 0.12 * density + 0.12 * filler + 0.16 * lively
 
 
-def _make(sents: list[Sentence], duration: float, max_len: float = MAX_LEN) -> Candidate:
-    start = max(0.0, sents[0].s - PAD_START)
-    end = min(duration, sents[-1].e + PAD_END) if duration > 0 else sents[-1].e + PAD_END
+def boundaries(sentences: list[Sentence]) -> tuple[list[bool], list[bool]]:
+    """(start_ok, end_ok) per sentence. A clip may end after sentence j when it finishes a thought: it ends
+    in . or ! (or the Arabic / CJK marks; a question only when nobody answers it at once), or a long pause
+    follows it, or it is the last one. When the
+    transcript has (almost) no punctuation, the pause that split two sentences is the only cue. A clip may
+    start at sentence i when the sentence before it could end one: otherwise it starts mid-sentence."""
+    n = len(sentences)
+    if n == 0:
+        return [], []
+    inner = sentences[:-1]
+    punctuated = bool(inner) and sum(1 for x in inner if H.ends_cleanly(x.text)) / len(inner) >= PUNCTUATED
+    end_ok: list[bool] = []
+    for j, x in enumerate(sentences):
+        if j == n - 1:
+            end_ok.append(True)
+            continue
+        gap = sentences[j + 1].s - x.e
+        if punctuated:
+            # a question that is answered straight away is not an ending: the answer is the payoff
+            asked = bool(QUESTION_END_RE.search(x.text.strip()))
+            end_ok.append((H.ends_cleanly(x.text) and not asked) or gap >= (ANSWER_PAUSE if asked else LONG_PAUSE))
+        else:
+            end_ok.append(gap >= PAUSE_BREAK)
+    start_ok = [i == 0 or end_ok[i - 1] for i in range(n)]
+    return start_ok, end_ok
+
+
+def _make(sents: list[Sentence], duration: float, max_len: float = MAX_LEN,
+          prev_e: Optional[float] = None, next_s: Optional[float] = None) -> Candidate:
+    """The clip around these sentences, with air before the first word and after the last one. The air
+    never takes more than half the silence to the speech next to it, so no stray syllable comes along."""
+    pad_start = PAD_START if prev_e is None else max(0.0, min(PAD_START, (sents[0].s - prev_e) / 2))
+    pad_end = PAD_END if next_s is None else max(0.0, min(PAD_END, (next_s - sents[-1].e) / 2))
+    start = max(0.0, sents[0].s - pad_start)
+    end = min(duration, sents[-1].e + pad_end) if duration > 0 else sents[-1].e + pad_end
     if end - start > max_len:  # padding must not push a max-length window past the cap
         end = start + max_len
         if end < sents[-1].e:
@@ -141,10 +178,35 @@ def generate_candidates(
     if not sentences:
         return _blind_windows(duration, max_len, max_candidates)
 
+    start_ok, end_ok = boundaries(sentences)
+    cands = _windows(sentences, duration, max_len, targets, start_ok, end_ok)
+    if not cands:
+        # no window both starts and ends on a finished thought (one long run-on, say): any sentence edge
+        everywhere = [True] * len(sentences)
+        cands = _windows(sentences, duration, max_len, targets, everywhere, everywhere)
+    if not cands:
+        # Not enough speech for a 15 s window on sentence boundaries: take what there is.
+        take: list[Sentence] = []
+        for s in sentences:
+            if take and s.e - take[0].s > max_len:
+                break
+            take.append(s)
+        nxt = sentences[len(take)].s if len(take) < len(sentences) else None
+        return [_make(take, duration, max_len, next_s=nxt)]
+    ranked = sorted((c for _, _, c in cands), key=_cheap_score, reverse=True)[:max_candidates]
+    return sorted(ranked, key=lambda c: c.start)
+
+
+def _windows(sentences: list[Sentence], duration: float, max_len: float, targets: tuple[float, ...],
+             start_ok: list[bool], end_ok: list[bool]) -> list[tuple[int, int, Candidate]]:
+    """For every sentence a clip may start at, the windows closest to each target length that end where a
+    clip may end. A window runs on past its target to the end of the thought rather than stopping short."""
     seen: set[tuple[int, int]] = set()
     cands: list[tuple[int, int, Candidate]] = []
     n = len(sentences)
     for i in range(n):
+        if not start_ok[i]:
+            continue
         spans: list[tuple[int, float]] = []
         for j in range(i, n):
             dur = sentences[j].e - sentences[i].s
@@ -152,7 +214,7 @@ def generate_candidates(
             # sentence boundary instead of being cut to length
             if dur + PAD_START + PAD_END > max_len:
                 break
-            if dur >= MIN_LEN:
+            if dur >= MIN_LEN and end_ok[j]:
                 spans.append((j, dur))
         for target in targets:
             if not spans:
@@ -160,7 +222,9 @@ def generate_candidates(
             j = min(spans, key=lambda t: (abs(t[1] - target), t[0]))[0]
             if (i, j) in seen:
                 continue
-            c = _make(sentences[i : j + 1], duration, max_len)
+            c = _make(sentences[i : j + 1], duration, max_len,
+                      prev_e=sentences[i - 1].e if i > 0 else None,
+                      next_s=sentences[j + 1].s if j + 1 < n else None)
             near = any(
                 (ci == i and abs(other.end - c.end) < 2.0) or (cj == j and abs(other.start - c.start) < 2.0)
                 for ci, cj, other in cands
@@ -169,16 +233,7 @@ def generate_candidates(
                 continue
             seen.add((i, j))
             cands.append((i, j, c))
-    if not cands:
-        # Not enough speech for a 15 s window on sentence boundaries: take what there is.
-        take: list[Sentence] = []
-        for s in sentences:
-            if take and s.e - take[0].s > max_len:
-                break
-            take.append(s)
-        return [_make(take, duration, max_len)]
-    ranked = sorted((c for _, _, c in cands), key=_cheap_score, reverse=True)[:max_candidates]
-    return sorted(ranked, key=lambda c: c.start)
+    return cands
 
 
 def _blind_windows(duration: float, max_len: float = MAX_LEN, limit: int = MAX_CANDIDATES) -> list[Candidate]:

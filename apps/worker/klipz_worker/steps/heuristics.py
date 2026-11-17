@@ -60,6 +60,11 @@ FILLERS |= {"ehm", "eh", "cioè", "tipo", "praticamente", "insomma", "boh", "est
 WEAK_STARTS |= {"e", "ma", "quindi", "allora", "perché", "anche", "poi", "però", "cioè", "beh", "y", "pero",
                 "entonces", "porque", "también", "luego", "bueno", "pues", "et", "mais", "donc", "alors", "parce",
                 "aussi", "puis", "ben", "und", "aber", "weil", "dann", "auch", "mas", "então", "também", "depois", "bom"}
+# Persian, Arabic and Urdu: conjunctions and pronouns that lean on what came before, and "well" openers
+WEAK_STARTS |= {"و", "ولی", "اما", "پس", "که", "چون", "چونکه", "یعنی", "بعد", "بعدش", "هم", "این", "اون", "آن",
+                "او", "اینا", "اونا", "اینم", "خب", "خوب", "آره", "یا", "بنابراین", "تازه", "لكن", "ولكن", "ثم",
+                "لأن", "لذلك", "يعني", "هذا", "هذه", "هو", "هي", "أو", "بس", "طيب", "اور", "لیکن", "مگر",
+                "کیونکہ", "پھر", "یہ", "وہ"}
 CONCLUSION_PHRASES += (
     "ecco perché", "il punto è", "alla fine", "la lezione", "ricorda", "ed è così", "il risultato",
     "por eso", "al final", "la lección", "recuerda", "el resultado", "voilà pourquoi", "à la fin", "la leçon",
@@ -108,8 +113,11 @@ STOPWORDS = set(
     "yeah okay ok well one thing things going gonna know think mean right say said says see make made".split()
 )
 
-_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'\-]*")
-SENT_END_RE = re.compile(r"[.!?…]+[\"')\]]*$")
+# A word in any script: letters and digits (Python's \w is Unicode), plus the apostrophe / hyphen inside
+# English words, the zero-width non-joiner inside Persian ones and the Arabic vowel marks.
+_WORD_RE = re.compile(r"[^\W_][\w'\-\u200c\u064b-\u065f\u0670]*")
+# sentence-final marks: Latin, Arabic question mark, Urdu full stop, CJK; then closing quotes / brackets
+SENT_END_RE = re.compile(r"[.!?…؟۔。！？]+[\"')\]»”’]*$")
 
 
 def tokens(text: str) -> list[str]:

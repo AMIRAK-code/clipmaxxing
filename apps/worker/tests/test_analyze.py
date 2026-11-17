@@ -98,14 +98,98 @@ def test_candidates_on_sentence_boundaries_and_length():
     dur = words[-1]["e"] + 1
     cands = segment.generate_candidates(sents, dur)
     assert 3 <= len(cands) <= segment.pool_size(dur)  # the pool grows with the video
-    starts = {round(s.s - segment.PAD_START, 3) for s in sents} | {0.0}
-    ends = {round(s.e + segment.PAD_END, 3) for s in sents} | {round(dur, 3)}
     for c in cands:
         assert segment.MIN_LEN - 1 <= c.duration <= segment.MAX_LEN + 1e-6
-        assert max(c.start, 0.0) in starts and c.end in ends
-        assert c.sentences[0].s >= c.start and c.sentences[-1].e <= c.end
+        first, last = c.sentences[0], c.sentences[-1]
+        assert first in sents and last in sents
+        # a little air around the speech, never more than half the silence to the next speech
+        assert first.s - segment.PAD_START - 1e-6 <= c.start <= first.s
+        assert last.e <= c.end <= last.e + segment.PAD_END + 1e-6
+        i, j = sents.index(first), sents.index(last)
+        if i > 0:
+            assert c.start >= (sents[i - 1].e + first.s) / 2 - 1e-3
+        if j + 1 < len(sents):
+            assert c.end <= (last.e + sents[j + 1].s) / 2 + 1e-3
     keys = {(c.start, c.end) for c in cands}
     assert len(keys) == len(cands)
+
+
+def _timed(parts: list[tuple[str, float]], start: float = 0.0) -> list[dict]:
+    """Words of each (sentence, pause after it) pair, 0.4 s a word."""
+    out, t = [], start
+    for text, pause in parts:
+        for w in text.split():
+            out.append({"w": w, "s": round(t, 3), "e": round(t + 0.32, 3)})
+            t += 0.4
+        t += pause
+    return out
+
+
+def test_clips_start_at_a_sentence_start_and_end_on_a_finished_thought():
+    # punctuated transcript: the 25 s cap splits the run-on second sentence mid-thought
+    run_on = " ".join(["and then we kept going further"] * 14)
+    parts = [("Here is the thing nobody tells you about saving money every month.", 0.3),
+             (run_on, 0.1),
+             ("That is the whole trick.", 0.3)] + [
+             (f"Sentence number {k} explains another useful detail clearly.", 0.3) for k in range(12)]
+    sents = segment.build_sentences(_timed(parts))
+    start_ok, end_ok = segment.boundaries(sents)
+    cut = [i for i, s in enumerate(sents) if not segment.H.ends_cleanly(s.text) and i < len(sents) - 1]
+    assert cut, "the run-on sentence must have been split by the length cap"
+    for i in cut:
+        assert end_ok[i] is False and start_ok[i + 1] is False
+    for c in segment.generate_candidates(sents, sents[-1].e + 1):
+        assert segment.H.ends_cleanly(c.sentences[-1].text)
+        i = sents.index(c.sentences[0])
+        assert i == 0 or segment.H.ends_cleanly(sents[i - 1].text)
+
+
+def test_a_clip_runs_on_to_finish_its_sentence():
+    # 14 s of short sentences, then one 6 s sentence: a 15 s clip would have to stop mid-way, so the clip
+    # takes the whole sentence (20 s) rather than ending before or inside it
+    parts = [("One two three four five six seven.", 0.2)] * 5 + [
+        ("This last sentence takes quite a while to finish because it keeps on going and going.", 2.0),
+        ("Unrelated words after a long pause here.", 0.2)] + [("More words to make the video longer.", 0.2)] * 50
+    sents = segment.build_sentences(_timed(parts))
+    cands = segment.generate_candidates(sents, sents[-1].e + 1, max_candidates=100)
+    first = [c for c in cands if c.start <= 0.0 + 1e-6]
+    assert first and all(segment.H.ends_cleanly(c.sentences[-1].text) for c in first)
+    assert min(c.duration for c in first) >= 15.0
+
+
+def test_a_clip_does_not_end_on_a_question_that_is_answered_next():
+    parts = [(f"Statement number {k} is a plain sentence.", 0.3) for k in range(6)] + [
+        ("So what do you think people get wrong about this?", 0.3),
+        ("Honestly they think it is easy and it is not.", 0.3)] + [
+        (f"Another plain sentence number {k} follows here.", 0.3) for k in range(30)]
+    sents = segment.build_sentences(_timed(parts))
+    q = next(i for i, s in enumerate(sents) if s.text.endswith("?"))
+    _start_ok, end_ok = segment.boundaries(sents)
+    assert end_ok[q] is False and end_ok[q + 1] is True
+    assert all(not c.sentences[-1].text.endswith("?") for c in segment.generate_candidates(sents, sents[-1].e + 1))
+    # nobody answers (a long pause, then something else): the question may end a clip
+    parts[7] = ("Honestly they think it is easy and it is not.", 0.3)
+    parts[6] = ("So what do you think people get wrong about this?", 2.0)  # thinking before answering
+    assert segment.boundaries(segment.build_sentences(_timed(parts)))[1][q] is False
+    parts[6] = ("So what do you think people get wrong about this?", 3.5)
+    sents = segment.build_sentences(_timed(parts))
+    assert segment.boundaries(sents)[1][q] is True
+
+
+def test_unpunctuated_transcripts_use_pauses_as_boundaries():
+    words = _timed([("یک دو سه چهار پنج شش هفت هشت", 1.0)] * 12)
+    sents = segment.build_sentences(words)
+    start_ok, end_ok = segment.boundaries(sents)
+    assert all(start_ok) and all(end_ok)
+    assert segment.generate_candidates(sents, sents[-1].e + 1)
+
+
+def test_persian_sentences_end_and_start_like_latin_ones():
+    assert segment.H.ends_cleanly("این همان چیزی است که می‌خواستم؟")
+    assert segment.H.ends_cleanly("بله.»")
+    assert not segment.H.starts_cleanly("ولی بعدش فهمیدم")
+    assert segment.H.starts_cleanly("راز موفقیت در سه کلمه است")
+    assert segment.H.tokens("می‌خواهم بگویم") == ["می\u200cخواهم", "بگویم"]
 
 
 def test_short_video_single_candidate():
