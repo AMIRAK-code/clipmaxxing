@@ -502,11 +502,18 @@ def test_persian_captions_are_laid_out_right_to_left():
     fb = fallback_font()
     half = (shaped_width([(fb, "سلام")], style["fontSize"], fb) + shaped_width([(fb, "دوستان،")], style["fontSize"], fb)) / 2
     assert state["سلام"]["x"] - state["دوستان،"]["x"] == pytest.approx((half + style["fontSize"] * 0.28) * 1.0, rel=0.25)
-    # the highlight is on the spoken word: every word is drawn in the active colour at some point
+    # the highlight is on the spoken word: every word is drawn in the active colour at some point (a word
+    # Smart Edit emphasised, which it now also does for Persian keywords, in the emphasis colour)
     active = parse_color(style["activeColor"]).ass()
+    emphasis = parse_color(style["emphasisColor"]).ass()
+    emph = {w["w"] for w in edit["captions"]["words"] if w.get("emph")}
+    assert emph, "Smart Edit finds keywords in Persian too"
     for word in ("سلام", "دوستان،", "امروز", f"می{ZWNJ}خواهیم", "کلاس"):
         fills = {ev["fill"] for ev in words if ev["text"].lstrip(text_mod.RLM) == word}
-        assert active in fills and len(fills) > 1, word
+        if word in emph:
+            assert fills == {emphasis}, word   # an emphasised word keeps its colour
+        else:
+            assert active in fills and len(fills) > 1, word
     # Latin inside the Persian clip: caption font, left to right
     latin = next(ev for ev in words if ev["text"] == "IPHONE")
     assert latin["font"] == "KLIPZ Montserrat" and not latin["rtl"]
