@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 import { composeCaption } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, commitPhase } from '../errors';
 import { httpRequest, pollOptionsOf, pollUntil, uploadInChunks, withAssetSource, type ByteRange, type ErrorMapper } from '../http';
 import { LINKEDIN_MIN_SIZE_BYTES, PLATFORM_LIMITS } from '../limits';
 import { buildAuthUrl, tokenSetFromOAuth } from '../oauth';
@@ -262,21 +262,23 @@ export const linkedinPublisher: Publisher = {
       throw new PublishError('LinkedIn is still processing the video; retry the publish later.', { code: 'media_processing_timeout', retryable: true, retryAfterSec: 60 });
     }
 
-    const post = await httpRequest(ctx, {
-      url: `${REST}/posts`,
-      headers,
-      bearer: token,
-      json: {
-        author: owner,
-        commentary: escapeLinkedInText(composeCaption('linkedin', meta)),
-        visibility: options.visibility,
-        distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
-        content: { media: { title: options.title ?? meta.title ?? 'Video', id: videoUrn } },
-        lifecycleState: 'PUBLISHED',
-        isReshareDisabledByAuthor: false,
-      },
-      mapError: linkedinError,
-    });
+    const post = await commitPhase('creating', () =>
+      httpRequest(ctx, {
+        url: `${REST}/posts`,
+        headers,
+        bearer: token,
+        json: {
+          author: owner,
+          commentary: escapeLinkedInText(composeCaption('linkedin', meta)),
+          visibility: options.visibility,
+          distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+          content: { media: { title: options.title ?? meta.title ?? 'Video', id: videoUrn } },
+          lifecycleState: 'PUBLISHED',
+          isReshareDisabledByAuthor: false,
+        },
+        mapError: linkedinError,
+      }),
+    );
     const id = post.headers.get('x-restli-id') ?? str(asRecord(post.data).id);
     if (!id) throw new PublishError('LinkedIn did not return a post id (x-restli-id)', { code: 'provider_error' });
     return { externalId: id, status: 'published', url: `https://www.linkedin.com/feed/update/${id}/` };

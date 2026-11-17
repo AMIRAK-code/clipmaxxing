@@ -1,5 +1,5 @@
 export * from './types';
-export { PublishError, isPublishError, type PublishErrorInit } from './errors';
+export { PublishError, isPublishError, toCommitted, commitPhase, type PublishErrorInit, type CommitPhase } from './errors';
 export { PLATFORM_LIMITS, INSTAGRAM_RECOMMENDED_MAX_SEC, X_LONG_VIDEO_MAX_SEC } from './limits';
 export { composeCaption, composeCaptionUntruncated, composeTitle, captionLength, xWeightedLength, normalizeHashtag, truncateText } from './caption';
 export { backoffDelayMs, type BackoffOptions } from './backoff';

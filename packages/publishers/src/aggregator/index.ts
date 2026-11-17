@@ -18,7 +18,7 @@
  * synthetic account and there are no OAuth tokens (TokenSet.accessToken is an empty placeholder).
  */
 import { composeCaption, composeTitle } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, commitPhase } from '../errors';
 import { httpRequest, shouldStream, streamingMultipart, withAssetSource, type ErrorMapper } from '../http';
 import type { AccountInfo, AggregatorConfig, PostMetrics, PostStatus, Provider, Publisher, PublisherContext, PublishArgs, PublishResult } from '../types';
 import { asArray, asRecord, bool, compact, metricsOf, num, pick, str, toArrayBuffer } from '../util';
@@ -117,23 +117,25 @@ async function uploadPostPublish(ctx: PublisherContext, config: AggregatorConfig
       if (!shouldStream(ctx, source.size)) {
         const bytes = await source.readChunk(0, source.size);
         form.set('video', new Blob([toArrayBuffer(bytes)], { type: 'video/mp4' }), 'video.mp4');
-        return httpRequest(ctx, { method: 'POST', url, headers: auth, body: form, mapError: aggregatorError });
+        return commitPhase('creating', () => httpRequest(ctx, { method: 'POST', url, headers: auth, body: form, mapError: aggregatorError }));
       }
       const fields: Array<[string, string]> = [];
       for (const [k, v] of form.entries()) if (typeof v === 'string') fields.push([k, v]);
       const mp = streamingMultipart(ctx, fields, { field: 'video', filename: 'video.mp4', contentType: 'video/mp4', source });
-      return httpRequest(ctx, {
-        method: 'POST',
-        url,
-        headers: { ...auth, 'Content-Type': mp.contentType, 'Content-Length': String(mp.contentLength) },
-        body: mp.body,
-        duplex: 'half',
-        mapError: aggregatorError,
-      });
+      return commitPhase('creating', () =>
+        httpRequest(ctx, {
+          method: 'POST',
+          url,
+          headers: { ...auth, 'Content-Type': mp.contentType, 'Content-Length': String(mp.contentLength) },
+          body: mp.body,
+          duplex: 'half',
+          mapError: aggregatorError,
+        }),
+      );
     });
   } else if (render.url) {
     form.set('video', render.url);
-    res = await httpRequest(ctx, { method: 'POST', url, headers: auth, body: form, mapError: aggregatorError });
+    res = await commitPhase('creating', () => httpRequest(ctx, { method: 'POST', url, headers: auth, body: form, mapError: aggregatorError }));
   } else {
     throw new PublishError('Render has neither filePath nor url', { code: 'asset_missing' });
   }
@@ -296,12 +298,14 @@ async function ayrsharePublish(ctx: PublisherContext, config: AggregatorConfig, 
     default:
       break;
   }
-  const res = await httpRequest(ctx, {
-    url: `${baseUrl(config)}/api/post`,
-    headers: ayrshareHeaders(config, account),
-    json: body,
-    mapError: aggregatorError,
-  });
+  const res = await commitPhase('creating', () =>
+    httpRequest(ctx, {
+      url: `${baseUrl(config)}/api/post`,
+      headers: ayrshareHeaders(config, account),
+      json: body,
+      mapError: aggregatorError,
+    }),
+  );
   const id = str(asRecord(res.data).id);
   const outcome = ayrshareOutcome(res.data, provider);
   if (outcome.status === 'failed') {

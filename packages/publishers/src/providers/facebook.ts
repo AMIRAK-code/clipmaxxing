@@ -14,7 +14,7 @@
  */
 import { z } from 'zod';
 import { composeCaption } from '../caption';
-import { PublishError } from '../errors';
+import { PublishError, commitPhase } from '../errors';
 import { httpRequest, pollOptionsOf, pollUntil, withAssetSource } from '../http';
 import { PLATFORM_LIMITS } from '../limits';
 import type { AccountInfo, PostStatus, Publisher, PublisherContext, TokenSet } from '../types';
@@ -113,32 +113,41 @@ export const facebookPublisher: Publisher = {
       await withAssetSource(render, ctx, (source) => ruploadBinary(ctx, uploadUrl, token, source));
     }
 
-    await httpRequest(ctx, {
-      url: reelsEndpoint,
-      form: compact({
-        video_id: videoId,
-        upload_phase: 'finish',
-        video_state: 'PUBLISHED',
-        description: composeCaption('facebook', meta),
-        title: options.title ?? meta.title,
-        is_ai_generated: options.isAiGenerated,
-      }) as Record<string, string | boolean>,
-      bearer: token,
-      mapError: metaError,
-    });
-
-    const polled = await pollUntil(
-      ctx,
-      async () => {
-        const s = await videoStatus(ctx, token, videoId);
-        return { done: s.status !== 'processing', value: s };
-      },
-      pollOptionsOf(ctx, { maxAttempts: 12, intervalMs: 5000 }),
+    // 'finish' with video_state PUBLISHED is what publishes the Reel.
+    await commitPhase('creating', () =>
+      httpRequest(ctx, {
+        url: reelsEndpoint,
+        form: compact({
+          video_id: videoId,
+          upload_phase: 'finish',
+          video_state: 'PUBLISHED',
+          description: composeCaption('facebook', meta),
+          title: options.title ?? meta.title,
+          is_ai_generated: options.isAiGenerated,
+        }) as Record<string, string | boolean>,
+        bearer: token,
+        mapError: metaError,
+      }),
     );
-    if (polled.value.status === 'failed') {
-      throw new PublishError(polled.value.error ?? 'Facebook Reel failed', { code: 'processing_failed' });
-    }
-    return { externalId: videoId, status: polled.value.status === 'published' ? 'published' : 'processing', url: reelUrl(videoId) };
+
+    return commitPhase(
+      'created',
+      async () => {
+        const polled = await pollUntil(
+          ctx,
+          async () => {
+            const s = await videoStatus(ctx, token, videoId);
+            return { done: s.status !== 'processing', value: s };
+          },
+          pollOptionsOf(ctx, { maxAttempts: 12, intervalMs: 5000 }),
+        );
+        if (polled.value.status === 'failed') {
+          throw new PublishError(polled.value.error ?? 'Facebook Reel failed', { code: 'processing_failed' });
+        }
+        return { externalId: videoId, status: polled.value.status === 'published' ? ('published' as const) : ('processing' as const), url: reelUrl(videoId) };
+      },
+      videoId,
+    );
   },
 
   getStatus(ctx, { tokens, externalId }) {
