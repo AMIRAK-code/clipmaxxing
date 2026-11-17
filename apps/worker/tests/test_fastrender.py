@@ -569,3 +569,22 @@ def test_render_persian_clip(tmp_path: Path, sample_video: Path):
     assert _probe_frames(out) == info["frames"] == m.duration_in_frames(edit["video"])
     assert "shaping=complex" in (tmp_path / "work" / "graph.txt").read_text(encoding="utf-8")
     assert (tmp_path / "work" / "fonts" / fallback_font().file).exists()
+
+
+# ── audio fades at cuts ──────────────────────────────────────────────────
+def test_sound_fades_at_every_jump_but_not_between_pieces_that_continue_each_other():
+    pieces = [{"id": "a", "srcStart": 0.5, "srcEnd": 2.0}, {"id": "b", "srcStart": 2.0, "srcEnd": 3.0},
+              {"id": "c", "srcStart": 5.0, "srcEnd": 6.5}]
+    assert m.piece_edge_fades(pieces) == [(True, False), (False, True), (True, True)]
+    edit = edit_for()
+    edit["video"] = pieces
+    plan = graph.build_plan(props_for(edit), "src.mp4", has_audio=True)
+    chains = [p for p in plan.graph.split(";") if "atrim=" in p]
+    assert len(chains) == 3
+    assert "afade=t=in" in chains[0] and "afade=t=out" not in chains[0]   # clip start
+    assert "afade" not in chains[1].split("afade=t=out")[0]               # split join: no fade in
+    assert "afade=t=out" in chains[1]                                     # jump to c
+    assert "afade=t=in" in chains[2] and "afade=t=out" in chains[2]
+    # the fade-out ends exactly where the piece's audio ends: length unchanged
+    n = m.piece_frames(pieces)[2][1]
+    assert f"afade=t=out:st={graph._f((n - m.CUT_FADE_FRAMES) / 30)}:d={graph._f(m.CUT_FADE_FRAMES / 30)}" in chains[2]

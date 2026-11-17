@@ -219,6 +219,25 @@ def piece_look(edit: dict[str, Any], piece: Optional[dict[str, Any]]) -> str:
     return str((piece or {}).get("look") or edit.get("look") or "none")
 
 
+CUT_FADE_FRAMES = 2  # timeline.ts CUT_FADE_FRAMES
+
+
+def piece_edge_fades(pieces: Sequence[dict[str, Any]]) -> list[tuple[bool, bool]]:
+    """timeline.ts pieceEdgeFades(): (fade in, fade out) per piece: at the clip's edges and on both sides
+    of every cut; pieces that continue each other in the source join without a dip."""
+    def contiguous(a: dict[str, Any], b: dict[str, Any]) -> bool:
+        return abs(float(a["srcEnd"]) - float(b["srcStart"])) < 0.0005
+
+    n = len(pieces)
+    return [(i == 0 or not contiguous(pieces[i - 1], p), i == n - 1 or not contiguous(p, pieces[i + 1]))
+            for i, p in enumerate(pieces)]
+
+
+def edge_fade_frames(n: int, frames: int = CUT_FADE_FRAMES) -> int:
+    """Fade length for a piece of `n` frames (never more than half of it)."""
+    return max(0, min(frames, n // 2))
+
+
 def piece_volume(edit: dict[str, Any], piece: Optional[dict[str, Any]]) -> float:
     """timeline.ts pieceVolume(): the piece's own level (0..1.5), else the clip's."""
     v = (piece or {}).get("volume")

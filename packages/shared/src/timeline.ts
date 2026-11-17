@@ -157,6 +157,38 @@ export function pieceLook(edit: Pick<EditState, "look">, piece: Pick<VideoPiece,
   return piece?.look ?? edit.look;
 }
 
+/** Length of the audio fade at a cut, in output frames (2 frames = 66 ms at 30 fps). */
+export const CUT_FADE_FRAMES = 2;
+
+export interface EdgeFade {
+  fadeIn: boolean;
+  fadeOut: boolean;
+}
+
+const contiguous = (a: VideoPiece, b: VideoPiece) => Math.abs(a.srcEnd - b.srcStart) < 0.0005;
+
+/**
+ * Where each piece's sound gets a short fade so a jump never clicks: at the start and end of the clip and
+ * on both sides of every cut. Pieces that continue each other in the source (a split) join without a dip.
+ * fastrender/model.py piece_edge_fades() is the same.
+ */
+export function pieceEdgeFades(pieces: VideoPiece[]): EdgeFade[] {
+  return pieces.map((p, i) => ({
+    fadeIn: i === 0 || !contiguous(pieces[i - 1]!, p),
+    fadeOut: i === pieces.length - 1 || !contiguous(p, pieces[i + 1]!),
+  }));
+}
+
+/** Gain 0..1 at local frame `f` of a piece `n` frames long (per-frame steps of the fade). */
+export function edgeFadeGain(f: number, n: number, fade: EdgeFade, frames = CUT_FADE_FRAMES): number {
+  const len = Math.min(frames, Math.floor(n / 2));
+  if (len <= 0) return 1;
+  let g = 1;
+  if (fade.fadeIn && f < len) g = Math.min(g, (f + 0.5) / len);
+  if (fade.fadeOut && f >= n - len) g = Math.min(g, (n - f - 0.5) / len);
+  return Math.max(0, g);
+}
+
 /** The main-audio level of a piece before ducking: its own, else the clip's. */
 export function pieceVolume(edit: Pick<EditState, "volume">, piece: Pick<VideoPiece, "volume"> | null | undefined): number {
   const v = piece?.volume;
