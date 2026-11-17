@@ -114,10 +114,14 @@ def _refresh_smart_edit(ctx: JobContext, clip: dict[str, Any]) -> None:
         tr = ctx.db.one("transcripts", "select * from transcripts where source_video_id = ?", clip["source_video_id"])
         if not tr or not tr.get("words"):
             return
+        source = ctx.db.get("source_videos", clip["source_video_id"]) or {}
+        audio_path = ctx.settings.storage_path(source["audio_key"]) if source.get("audio_key") else None
+        start, end = float(clip["start_sec"]), float(clip["end_sec"])
         edit = smart_edit.build_edit(
-            tr["words"], float(clip["start_sec"]), float(clip["end_sec"]),
+            tr["words"], start, end,
             keywords=(clip.get("score_breakdown") or {}).get("keywords") or [],
             hook=clip.get("hook"), style_id=clip.get("caption_style_id") or None,
+            snap=smart_edit.snap_for(audio_path, start, end),
         )
         ctx.db.update("clips", clip["id"], {"edit_state": edit})
         clip["edit_state"] = edit

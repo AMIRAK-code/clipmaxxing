@@ -29,10 +29,75 @@ def test_keep_ranges_cuts_silence_and_isolated_filler():
     ranges = se.keep_ranges(WORDS, 9.5, 15.5)
     assert len(ranges) == 2
     (a0, a1), (b0, b1) = ranges
-    assert a0 == pytest.approx(10.0 - se.KEEP_PAD) and a1 == pytest.approx(10.9 + se.KEEP_PAD)
-    assert b0 == pytest.approx(13.0 - se.KEEP_PAD) and b1 == pytest.approx(14.9 + se.KEEP_PAD)
+    post, pre = se.pause_pads(13.0 - 10.9)
+    assert a0 == pytest.approx(10.0 - se.HEAD_PAD) and a1 == pytest.approx(10.9 + post)
+    assert b0 == pytest.approx(13.0 - pre) and b1 == pytest.approx(14.9 + se.TAIL_PAD)
     # the "um" at 12.3 is in neither piece
     assert not any(lo <= 12.4 <= hi for lo, hi in ranges)
+
+
+def test_air_around_a_cut_follows_the_pause_and_short_pauses_are_not_cut():
+    short_post, short_pre = se.pause_pads(0.6)
+    long_post, long_pre = se.pause_pads(2.0)
+    assert short_post + short_pre == pytest.approx(se.AIR_MIN) and long_post + long_pre > short_post + short_pre
+    assert long_post > long_pre  # more air after the last word (its tail) than before the next
+    assert se.pause_pads(30.0) == pytest.approx((se.AIR_MAX * se.AIR_AFTER, se.AIR_MAX * (1 - se.AIR_AFTER)))
+    # a 0.52 s pause would only lose 0.2 s: not worth a jump, the pause stays
+    words = [W("one", 1.0, 1.4), W("two", 1.92, 2.3)]
+    assert se.keep_ranges(words, 0.8, 2.6) == [(pytest.approx(0.8), pytest.approx(2.6))]
+
+
+def _speech_like(segments: list[tuple[float, float]], total: float, sr: int = 16000):
+    """Synthetic audio: a 220 Hz tone (speech) in `segments`, faint noise (room tone) elsewhere."""
+    import numpy as np
+
+    t = np.arange(int(total * sr)) / sr
+    x = np.random.default_rng(1).normal(0, 0.002, t.size)
+    for a, b in segments:
+        m = (t >= a) & (t < b)
+        x[m] += 0.3 * np.sin(2 * np.pi * 220 * t[m])
+    return x
+
+
+def test_cut_points_move_into_quiet_audio_when_word_times_are_off():
+    # Whisper says "secret" ends at 10.9 and "is" starts at 13.0, but the voice rings on until 11.5 and
+    # the next one starts at 12.6 already
+    audio = _speech_like([(10.0, 11.5), (12.6, 15.0)], 16.0)
+    snap = se.QuietSnap.from_samples(audio, 16000, 0.0)
+    assert snap.usable
+    words = [W("So", 10.0, 10.2), W("the", 10.25, 10.4), W("secret", 10.45, 10.9),
+             W("is", 13.0, 13.1), W("today.", 13.2, 14.9)]
+    plain = se.keep_ranges(words, 9.5, 15.5)
+    snapped = se.keep_ranges(words, 9.5, 15.5, snap=snap)
+    assert plain[0][1] < 11.5 and plain[1][0] > 12.6  # by word times alone both cuts land on the voice
+    assert 11.5 <= snapped[0][1] <= 11.55             # snapped into the quiet right after the voice ...
+    assert 12.55 <= snapped[1][0] <= 12.6             # ... and the next piece starts just before it
+
+
+def test_quiet_snap_never_moves_anything_without_contrast():
+    import numpy as np
+
+    flat = np.full(16000 * 4, 0.2, dtype=np.float32)  # constant loud sound (music bed): no quiet anywhere
+    snap = se.QuietSnap.from_samples(flat, 16000, 0.0)
+    assert not snap.usable and snap.later(1.0, 1.25) == 1.0 and snap.earlier(2.0, 1.75) == 2.0
+    assert se.snap_for(None, 0, 1) is None and se.snap_for("does/not/exist.wav", 0, 1) is None
+
+
+def test_quiet_snap_reads_a_slice_of_a_wav(tmp_path):
+    import wave
+
+    import numpy as np
+
+    audio = _speech_like([(1.0, 2.0)], 3.0)
+    path = tmp_path / "audio.wav"
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+    snap = se.snap_for(path, 1.2, 1.8)
+    assert snap is not None and snap.usable and snap.t0 == pytest.approx(0.2, abs=1e-3)
+    assert 1.995 <= snap.later(1.9, 2.15) <= 2.05  # the voice ends at 2.0 (the slice starts on a sample, not a step)
 
 
 def test_keep_ranges_never_exceeds_clip_and_keeps_filler_inside_speech():
@@ -78,7 +143,8 @@ def test_single_piece_without_emphasis_has_no_zoom():
 def test_summary_counts():
     edit = se.build_edit(WORDS, 9.5, 15.5, keywords=["secret"])
     s = se.summary(edit, 9.5, 15.5)
-    assert s["cuts"] == 1 and s["seconds_removed"] > 2 and s["emphasised_words"] == 3
+    # 6 s window, 2.1 s pause (the "um" in it) cut, keeping air around the cut and at the clip's edges
+    assert s["cuts"] == 1 and s["seconds_removed"] > 1.5 and s["emphasised_words"] == 3
 
 
 # ── AI tab settings ───────────────────────────────────────────────────────

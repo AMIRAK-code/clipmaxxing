@@ -12,16 +12,31 @@ Everything stays editable afterwards. Pure functions over plain data so it is ea
 """
 from __future__ import annotations
 
+import logging
 import re
+import wave
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from . import heuristics as H
 
+log = logging.getLogger(__name__)
+
 # ── tuning ────────────────────────────────────────────────────────────────
-MAX_GAP = 0.45          # silence longer than this between two words is cut ...
+MAX_GAP = 0.5           # silence longer than this between two words is cut ...
 MIN_OUTPUT = 15.0       # ... but never so much that the finished clip drops under this (when it started above it)
 RELAXED_GAPS = (0.8, 1.2, 2.0)
-KEEP_PAD = 0.12         # ... keeping this much air on each side so speech is never clipped
+# ... keeping some of the pause as air around the cut, more for longer pauses so the edit keeps the
+# speaker's rhythm (a fixed sliver of air makes every cut feel like a snap). 60 % of the air stays after
+# the last word (Whisper's word ends are often early: the tail of a word is never clipped), 40 % before
+# the next one.
+PAUSE_KEEP_SHARE = 0.35
+AIR_MIN, AIR_MAX = 0.32, 0.75
+AIR_AFTER = 0.6
+MIN_CUT = 0.2           # cutting out less than this is not worth a jump: the pause stays
+HEAD_PAD = 0.2          # air before the clip's first word ...
+TAIL_PAD = 0.4          # ... and after its last word (within the clip)
+SNAP_MAX = 0.25         # how far a cut point may move to land in quiet audio
 MIN_PIECE = 0.35        # never leave a sliver shorter than this
 FILLER_WORDS = {"um", "uh", "uhm", "umm", "er", "erm", "hmm", "mm", "ah"}
 FILLER_MIN_GAP = 0.08   # a filler is only cut when there is a little silence on both sides (clean cut)
@@ -43,18 +58,126 @@ def _r(x: float) -> float:
     return round(x, 3)
 
 
+class QuietSnap:
+    """Loudness of a stretch of the source's audio in 10 ms steps, to move cut points into quiet.
+
+    Built from the 16 kHz mono WAV that ingest keeps (sources/<id>/audio.wav). "Quiet" is relative to the
+    stretch itself: close to its noise floor and well under its speech level. When the stretch has no
+    clear quiet/loud contrast (music, constant noise) it never moves anything."""
+
+    STEP = 0.01
+    RUN = 3  # 30 ms of quiet in a row
+
+    def __init__(self, db: Sequence[float], t0: float):
+        import numpy as np
+
+        self.t0 = t0
+        self.db = np.asarray(db, dtype=float)
+        self.usable = False
+        self.threshold = -1e9
+        if self.db.size >= 20:
+            floor, speech = float(np.percentile(self.db, 10)), float(np.percentile(self.db, 90))
+            if speech - floor >= 12.0:
+                self.usable = True
+                self.threshold = max(floor + 8.0, speech - 30.0)
+
+    @classmethod
+    def from_samples(cls, samples: Any, sr: int, t0: float) -> "QuietSnap":
+        import numpy as np
+
+        x = np.asarray(samples, dtype=np.float32)
+        hop = max(1, int(round(sr * cls.STEP)))
+        n = len(x) // hop
+        if n == 0:
+            return cls([], t0)
+        frames = x[: n * hop].reshape(n, hop)
+        rms = np.sqrt(np.mean(frames * frames, axis=1)) + 1e-9
+        return cls(20.0 * np.log10(rms), t0)
+
+    @classmethod
+    def from_wav(cls, path: Path | str, start: float, end: float, margin: float = 1.0) -> Optional["QuietSnap"]:
+        """The stretch [start - margin, end + margin] of a 16-bit PCM WAV; None when it cannot be read."""
+        import numpy as np
+
+        try:
+            with wave.open(str(path), "rb") as wf:
+                sr, ch, width = wf.getframerate(), wf.getnchannels(), wf.getsampwidth()
+                if width != 2:
+                    return None
+                a = max(0, int((start - margin) * sr))
+                b = min(wf.getnframes(), int((end + margin) * sr))
+                if b <= a:
+                    return None
+                wf.setpos(a)
+                raw = wf.readframes(b - a)
+        except (OSError, EOFError, wave.Error) as e:
+            log.info("no audio for quiet snapping (%s)", e)
+            return None
+        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        if ch > 1:
+            x = x.reshape(-1, ch).mean(axis=1)
+        return cls.from_samples(x, sr, a / sr)
+
+    def _i(self, t: float) -> int:
+        return int(round((t - self.t0) / self.STEP))
+
+    def _t(self, i: int) -> float:
+        return self.t0 + i * self.STEP
+
+    def _quiet(self, i0: int, i1: int) -> bool:
+        if i0 < 0 or i1 > len(self.db) or i1 <= i0:
+            return False
+        return bool((self.db[i0:i1] <= self.threshold).all())
+
+    def later(self, t: float, limit: float) -> float:
+        """A cut-out point at or after `t` (at most `limit`) where the sound has died down."""
+        if not self.usable or limit <= t:
+            return t
+        i, last = self._i(t), self._i(limit)
+        for j in range(i, last - self.RUN + 2):
+            if self._quiet(j, j + self.RUN):
+                return min(limit, max(t, self._t(j)))
+        return t
+
+    def earlier(self, t: float, limit: float) -> float:
+        """A cut-in point at or before `t` (at least `limit`) with quiet just before it."""
+        if not self.usable or limit >= t:
+            return t
+        i, first = self._i(t), self._i(limit)
+        for j in range(i, first + self.RUN - 1, -1):
+            if self._quiet(j - self.RUN, j):
+                return max(limit, min(t, self._t(j)))
+        return t
+
+
+def snap_for(audio_path: Optional[Path | str], start: float, end: float) -> Optional[QuietSnap]:
+    """QuietSnap for a clip of the source whose audio is at `audio_path`; None without audio."""
+    if not audio_path or not Path(audio_path).exists():
+        return None
+    return QuietSnap.from_wav(audio_path, start, end)
+
+
+def pause_pads(gap: float) -> tuple[float, float]:
+    """(air kept after the last word, air kept before the next word) when a pause of `gap` s is cut."""
+    air = min(AIR_MAX, max(AIR_MIN, PAUSE_KEEP_SHARE * gap))
+    return air * AIR_AFTER, air * (1.0 - AIR_AFTER)
+
+
 def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float, max_gap: float = MAX_GAP,
-                drop_fillers: bool = True) -> list[tuple[float, float]]:
-    """Source-time ranges to keep: the clip minus silences longer than `max_gap` and isolated filler words."""
+                drop_fillers: bool = True, snap: Optional[QuietSnap] = None) -> list[tuple[float, float]]:
+    """Source-time ranges to keep: the clip minus silences longer than `max_gap` and isolated filler words.
+    `snap` (optional) moves each cut point into quiet audio, so a cut never lands on a word's tail."""
     ws = [w for w in words if w["e"] > start and w["s"] < end]
     if not ws:
         return [(start, end)]
     spoken: list[tuple[float, float]] = []
+    dropped: list[tuple[float, float]] = []
     for i, w in enumerate(ws):
         if _norm(str(w["w"])) in FILLER_WORDS:
             before = w["s"] - (ws[i - 1]["e"] if i > 0 else start)
             after = (ws[i + 1]["s"] if i + 1 < len(ws) else end) - w["e"]
             if drop_fillers and before >= FILLER_MIN_GAP and after >= FILLER_MIN_GAP:
+                dropped.append((float(w["s"]), float(w["e"])))
                 continue  # drop it: the gap it leaves is closed below
         spoken.append((max(start, float(w["s"])), min(end, float(w["e"]))))
     if not spoken:
@@ -65,14 +188,32 @@ def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float, max_g
             ranges[-1][1] = max(ranges[-1][1], e)
         else:
             ranges.append([s, e])
+
+    # cut points: air proportional to each pause, never reaching into a dropped filler, then into quiet
     out: list[tuple[float, float]] = []
-    for i, (s, e) in enumerate(ranges):
-        lo = max(start, s - KEEP_PAD)
-        hi = min(end, e + KEEP_PAD)
-        if out and lo <= out[-1][1]:  # pads touch: merge
-            out[-1] = (out[-1][0], hi)
-        else:
+    lo = max(start, ranges[0][0] - HEAD_PAD)
+    if snap is not None:
+        lo = snap.earlier(lo, max(start, lo - SNAP_MAX))
+    for k, (s, e) in enumerate(ranges):
+        if k + 1 == len(ranges):
+            hi = min(end, e + TAIL_PAD)
+            if snap is not None:
+                hi = snap.later(hi, end)
             out.append((lo, hi))
+            break
+        nxt = ranges[k + 1][0]
+        post, pre = pause_pads(nxt - e)
+        fillers = [f for f in dropped if e <= f[0] and f[1] <= nxt]
+        cut_out = min(e + post, fillers[0][0] - 0.02) if fillers else e + post
+        cut_in = max(nxt - pre, fillers[-1][1] + 0.02) if fillers else nxt - pre
+        cut_out, cut_in = max(e, cut_out), min(nxt, cut_in)
+        if snap is not None:
+            cut_out = snap.later(cut_out, min(cut_out + SNAP_MAX, cut_in - MIN_CUT, fillers[0][0] if fillers else nxt))
+            cut_in = snap.earlier(cut_in, max(cut_in - SNAP_MAX, cut_out + MIN_CUT, fillers[-1][1] if fillers else e))
+        if cut_in - cut_out < MIN_CUT:
+            continue  # too little to cut: keep the pause, this range runs on into the next
+        out.append((lo, cut_out))
+        lo = cut_in
     # absorb slivers into a neighbour rather than flashing a few frames
     merged: list[tuple[float, float]] = []
     for s, e in out:
@@ -83,18 +224,19 @@ def keep_ranges(words: Sequence[dict[str, Any]], start: float, end: float, max_g
     return merged or [(start, end)]
 
 
-def fitted_ranges(words: Sequence[dict[str, Any]], start: float, end: float, min_output: float = MIN_OUTPUT) -> list[tuple[float, float]]:
+def fitted_ranges(words: Sequence[dict[str, Any]], start: float, end: float, min_output: float = MIN_OUTPUT,
+                  snap: Optional[QuietSnap] = None) -> list[tuple[float, float]]:
     """keep_ranges(), cutting less (longer pauses allowed, then no cuts at all) whenever the usual cuts
     would leave a clip shorter than `min_output`. A clip that is shorter than that to begin with is cut
     normally: there is no minimum to protect."""
-    ranges = keep_ranges(words, start, end)
+    ranges = keep_ranges(words, start, end, snap=snap)
     if end - start < min_output:
         return ranges
     kept = lambda rs: sum(e - s for s, e in rs)  # noqa: E731
     if kept(ranges) >= min_output:
         return ranges
     for gap in RELAXED_GAPS:
-        ranges = keep_ranges(words, start, end, max_gap=gap, drop_fillers=False)
+        ranges = keep_ranges(words, start, end, max_gap=gap, drop_fillers=False, snap=snap)
         if kept(ranges) >= min_output:
             return ranges
     return [(start, end)]
@@ -171,11 +313,13 @@ def build_edit(
     keywords: Sequence[str] = (),
     hook: Optional[str] = None,
     style_id: Optional[str] = None,
+    snap: Optional[QuietSnap] = None,
 ) -> dict[str, Any]:
-    """A complete EditState (packages/shared/src/types.ts) for the clip [start, end] of the source."""
+    """A complete EditState (packages/shared/src/types.ts) for the clip [start, end] of the source.
+    `snap` (snap_for(source audio, start, end)) lets cut points settle into quiet audio."""
     start, end = float(start), float(end)
     ws = [w for w in words if w["e"] > start and w["s"] < end and str(w["w"]).strip()]
-    ranges = fitted_ranges(ws, start, end)
+    ranges = fitted_ranges(ws, start, end, snap=snap)
     emph = _emphasis(ws, keywords)
 
     caption_words: list[dict[str, Any]] = []

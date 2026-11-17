@@ -186,6 +186,7 @@ class _Span:
     segments: list[_Segment] = field(default_factory=list)
     audio: list[tuple[int, int]] = field(default_factory=list)   # (start, end) grid indices per piece
     volumes: list[float] = field(default_factory=list)           # main-audio level per piece
+    fades: list[tuple[bool, bool]] = field(default_factory=list)  # (fade in, fade out) per piece
     end: int = 0               # grid frames needed
 
 
@@ -224,7 +225,8 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
     # consecutive frames with the same layout kind share one filter chain (a "segment").
     spans: list[_Span] = []
     prev_end_grid: Optional[int] = None
-    for piece, (_from, n) in zip(pieces, frames):
+    fades = m.piece_edge_fades(pieces)
+    for piece, (_from, n), fade in zip(pieces, frames, fades):
         g = m.js_round(float(piece["srcStart"]) * FPS)
         if prev_end_grid is None or g < prev_end_grid or (g - prev_end_grid) / FPS > MAX_SPAN_GAP_SEC:
             spans.append(_Span(grid0=g))
@@ -248,6 +250,7 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
             seg.frames.append(fl)
         span.audio.append((local, local + n))
         span.volumes.append(m.piece_volume(edit, piece))
+        span.fades.append(fade)
         span.end = local + n
         prev_end_grid = g + n
 
@@ -291,7 +294,15 @@ def build_plan(props: dict[str, Any], source_path: str, *, has_audio: bool, ass_
             for pi, ((a0, a1), br) in enumerate(zip(span.audio, abr)):
                 out = f"au{si}_{pi}"
                 gain = f",volume={_f(max(0.0, span.volumes[pi]))}" if own_levels else ""
-                b.parts.append(f"[{br}]atrim=start={_f(a0 / FPS)}:end={_f(a1 / FPS)},asetpts=PTS-STARTPTS{gain}[{out}]")
+                # a short fade at every jump (timeline.ts pieceEdgeFades): cuts never click; length unchanged
+                fade_in, fade_out = span.fades[pi]
+                nf = m.edge_fade_frames(a1 - a0)
+                fade = ""
+                if nf and fade_in:
+                    fade += f",afade=t=in:st=0:d={_f(nf / FPS)}"
+                if nf and fade_out:
+                    fade += f",afade=t=out:st={_f((a1 - a0 - nf) / FPS)}:d={_f(nf / FPS)}"
+                b.parts.append(f"[{br}]atrim=start={_f(a0 / FPS)}:end={_f(a1 / FPS)},asetpts=PTS-STARTPTS{fade}{gain}[{out}]")
                 a_labels.append(out)
 
     cur = v_labels[0]

@@ -85,19 +85,26 @@ def analyze(
         chosen += select_top([s for s in pool if s not in chosen], max_clips - len(chosen), ALT_OVERLAP, taken=chosen)
         chosen.sort(key=lambda s: -s.score)
 
+    # Edits are built before the write transaction: reading the audio for each clip must not hold the lock.
+    audio_path = ctx.settings.storage_path(source["audio_key"]) if source.get("audio_key") else None
+    edits: list[Optional[dict[str, Any]]] = []
+    for s in chosen:
+        edit = None
+        if ctx.settings.smart_edit:
+            try:
+                edit = smart_edit.build_edit(words, s.start, s.end, keywords=s.breakdown.get("keywords") or [],
+                                             hook=s.hook, style_id="bold-outline",
+                                             snap=smart_edit.snap_for(audio_path, s.start, s.end))
+            except Exception as e:  # noqa: BLE001 - never lose the clips over an edit nicety
+                log.warning("smart edit failed for %.1f-%.1f (%s); clip left unedited", s.start, s.end, e)
+        edits.append(edit)
+
     ids: list[str] = []
     db.conn.execute("BEGIN IMMEDIATE")  # replace candidates atomically: a crash must not leave zero clips
     try:
         for cid in doomed:
             db.conn.execute("delete from clips where id = ?", (cid,))
-        for s in chosen:
-            edit = None
-            if ctx.settings.smart_edit:
-                try:
-                    edit = smart_edit.build_edit(words, s.start, s.end, keywords=s.breakdown.get("keywords") or [],
-                                                 hook=s.hook, style_id="bold-outline")
-                except Exception as e:  # noqa: BLE001 - never lose the clips over an edit nicety
-                    log.warning("smart edit failed for %.1f-%.1f (%s); clip left unedited", s.start, s.end, e)
+        for s, edit in zip(chosen, edits):
             ids.append(db.insert("clips", {
                 **({"edit_state": edit} if edit else {}),
                 "project_id": source["project_id"],

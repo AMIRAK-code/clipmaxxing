@@ -5,15 +5,18 @@ import {
   OUT_H,
   OUT_W,
   duckGainAt,
+  edgeFadeGain,
   layoutAt,
   paneVideoStyle,
   pieceCropTrack,
   pieceDuration,
   pieceLook,
+  pieceEdgeFades,
   pieceOffsets,
   pieceVolume,
   zoomAt,
   type CropTrack,
+  type EdgeFade,
   type EditState,
   type Pane,
   type VideoPiece,
@@ -73,12 +76,15 @@ const PaneVideo: React.FC<{
 const PieceView: React.FC<{
   piece: VideoPiece;
   from: number;
+  /** length in output frames and where its sound fades (pieceEdgeFades) */
+  frames: number;
+  fade: EdgeFade;
   sourceUrl: string;
   srcW: number;
   srcH: number;
   edit: EditState;
   cropTrack: CropTrack | null;
-}> = ({ piece, from, sourceUrl, srcW, srcH, edit, cropTrack }) => {
+}> = ({ piece, from, frames, fade, sourceUrl, srcW, srcH, edit, cropTrack }) => {
   const local = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tSrc = piece.srcStart + local / fps;
@@ -90,7 +96,8 @@ const PieceView: React.FC<{
   // trimAfter must stay above trimBefore even for sub-frame pieces
   const trimAfter = Math.max(trimBefore + 1, Math.round(piece.srcEnd * fps));
   const levels = { broll: edit.broll, audio: edit.audio, duckLevel: edit.duckLevel, volume: pieceVolume(edit, piece) };
-  const mainVolume = (f: number) => duckGainAt(levels, (from + f) / fps);
+  // ducking under b-roll / added audio, and a short fade at every jump so cuts never click
+  const mainVolume = (f: number) => duckGainAt(levels, (from + f) / fps) * edgeFadeGain(f, frames, fade);
   const silent = () => 0;
 
   const tr = piece.transitionIn;
@@ -163,6 +170,7 @@ export const MainTrack: React.FC<{
 }> = ({ edit, sourceUrl, srcW, srcH, cropTrack }) => {
   const { fps } = useVideoConfig();
   const frames = pieceFrames(edit.video, fps);
+  const fades = pieceEdgeFades(edit.video);
   return (
     <AbsoluteFill style={{ background: "#000" }}>
       {edit.video.map((piece, i) => (
@@ -170,6 +178,8 @@ export const MainTrack: React.FC<{
           <PieceView
             piece={piece}
             from={frames[i]!.from}
+            frames={frames[i]!.duration}
+            fade={fades[i]!}
             sourceUrl={sourceUrl}
             srcW={srcW}
             srcH={srcH}

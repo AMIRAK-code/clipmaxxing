@@ -7,6 +7,9 @@ import {
   clampToSafeZone,
   createDefaultEditState,
   duckGainAt,
+  edgeFadeGain,
+  pieceEdgeFades,
+  CUT_FADE_FRAMES,
   editWordText,
   heuristicEmphasis,
   interpolateKeys,
@@ -228,5 +231,29 @@ describe("default edit state", () => {
     expect(edit.video).toHaveLength(1);
     expect(edit.captions.words.map((w) => w.w)).toEqual(["Hello", "world"]);
     expect(edit.hook.text).toBe("Wait for it");
+  });
+});
+
+describe("audio fades at cuts", () => {
+  it("fades at the clip's edges and around every jump, not between pieces that continue each other", () => {
+    const pieces = [
+      { id: "a", srcStart: 0.5, srcEnd: 2 },
+      { id: "b", srcStart: 2, srcEnd: 3 },
+      { id: "c", srcStart: 5, srcEnd: 6.5 },
+    ];
+    expect(pieceEdgeFades(pieces)).toEqual([
+      { fadeIn: true, fadeOut: false },
+      { fadeIn: false, fadeOut: true },
+      { fadeIn: true, fadeOut: true },
+    ]);
+  });
+
+  it("ramps over CUT_FADE_FRAMES frames and never fades more than half a short piece", () => {
+    const both = { fadeIn: true, fadeOut: true };
+    expect(CUT_FADE_FRAMES).toBe(2);
+    expect([0, 1, 2, 27, 28, 29].map((f) => edgeFadeGain(f, 30, both))).toEqual([0.25, 0.75, 1, 1, 0.75, 0.25]);
+    expect(edgeFadeGain(0, 30, { fadeIn: false, fadeOut: true })).toBe(1);
+    expect(edgeFadeGain(0, 1, both)).toBe(1); // a 1-frame piece is left alone
+    expect(edgeFadeGain(0, 2, both)).toBeCloseTo(0.5);
   });
 });
