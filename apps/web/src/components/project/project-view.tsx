@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card, EmptyState, Progress } from "@/components/ui/primitives";
 import { useJobs } from "@/hooks/use-jobs";
 import { actionBlockReason, filterClips, latestJob, rankClips, type ClipFilter } from "@/lib/clip-ui";
-import { api, cn } from "@/lib/utils";
+import { api, cn, fileUrl } from "@/lib/utils";
 import { ClipCard } from "./clip-card";
 import { ClipPreview } from "./clip-preview";
+import { MontagePanel } from "./montage-panel";
 import { ProjectHeader } from "./project-header";
 import { importJob, SourceCard } from "./source-card";
 import { TrimControl } from "./trim-control";
@@ -18,6 +19,8 @@ import { TrimControl } from "./trim-control";
 interface ProjectData {
   project: Project;
   source: SourceVideo | null;
+  /** montage projects: the videos the montages are made from */
+  inputs?: SourceVideo[];
   clips: Clip[];
   jobs: Job[];
   /** newest render per clip id */
@@ -32,6 +35,9 @@ const FILTERS: { id: ClipFilter; label: string }[] = [
 
 export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectData; initialWorkerAlive: boolean }) {
   const projectId = initial.project.id;
+  const montage = initial.project.kind === "montage";
+  const [project, setProject] = useState(initial.project);
+  const [inputs, setInputs] = useState(initial.inputs ?? []);
   const [title, setTitle] = useState(initial.project.title);
   const [source, setSource] = useState(initial.source);
   const [clips, setClips] = useState(initial.clips);
@@ -48,6 +54,8 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
   const refetch = useCallback(async () => {
     try {
       const d = await api<ProjectData>(`/api/projects/${projectId}`);
+      setProject(d.project);
+      if (d.inputs) setInputs(d.inputs);
       setSource(d.source);
       setClips(d.clips);
       if (d.renders) setRenders(d.renders);
@@ -174,7 +182,9 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
         </div>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      {montage ? <MontagePanel project={project} inputs={inputs} jobs={jobs} onChange={() => void refetch()} /> : null}
+
+      <div className={cn("grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]", montage && "hidden")}>
         <SourceCard source={source} job={importJob(jobs)} />
         <Card className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-start gap-3">
@@ -269,7 +279,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_380px] lg:grid-cols-[minmax(0,1fr)_340px]">
         <section aria-label="Clips" className="flex min-w-0 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold">Clips</h2>
+            <h2 className="text-lg font-bold">{montage ? "Montages" : "Clips"}</h2>
             <span className="text-sm text-muted">{clips.length - discarded.length}</span>
             <div role="group" aria-label="Filter clips" className="ml-auto flex gap-1 rounded-lg border border-line p-0.5">
               {FILTERS.map((f) => (
@@ -287,7 +297,11 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
           </div>
 
           {clips.length === 0 ? (
-            source?.status === "deleted" ? (
+            montage ? (
+              <EmptyState title="No montages yet" icon={<Scissors className="h-8 w-8" />}>
+                Add your videos, choose how many montages and how long, then press “Make montages”.
+              </EmptyState>
+            ) : source?.status === "deleted" ? (
               <EmptyState title="The source video was removed">Its file was cleaned up, so new clips can&apos;t be found. Import the video again to analyse it.</EmptyState>
             ) : analyzing ? (
               <EmptyState title="Finding clips…">
@@ -312,7 +326,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
             <>
               {visible.length === 0 ? <p className="rounded-lg border border-dashed border-line p-4 text-center text-sm text-muted">No clips match this filter.</p> : null}
               {visible.map((c) => (
-                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} />
+                <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} montage={montage} />
               ))}
               {discarded.length > 0 ? (
                 <div className="mt-2">
@@ -327,7 +341,7 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
                   {showDiscarded ? (
                     <div className="mt-2 flex flex-col gap-3">
                       {discarded.map((c) => (
-                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} />
+                        <ClipCard key={c.id} clip={c} render={renders[c.id]} rank={rankOf.get(c.id) ?? 0} selected={c.id === selectedId} onSelect={() => setSelectedId(c.id)} onStatus={(s) => void patchClip(c.id, { status: s })} onExport={() => void exportClip(c.id)} montage={montage} />
                       ))}
                     </div>
                   ) : null}
@@ -341,8 +355,12 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
           {selected ? (
             <>
               <h2 className="truncate text-sm font-bold">{selected.title || "Untitled clip"}</h2>
-              <ClipPreview clip={selected} source={source} words={words} />
-              {source?.status === "ready" ? (
+              {montage ? (
+                <MontagePreview url={renders[selected.id]?.status === "ready" ? fileUrl(renders[selected.id]!.storage_key) : null} clipId={selected.id} />
+              ) : (
+                <ClipPreview clip={selected} source={source} words={words} />
+              )}
+              {source?.status === "ready" && !montage ? (
                 <TrimControl
                   key={selected.id}
                   start={selected.start_sec}
@@ -359,5 +377,16 @@ export function ProjectView({ initial, initialWorkerAlive }: { initial: ProjectD
         </aside>
       </div>
     </div>
+  );
+}
+
+/** A montage jumps between scenes, so the page shows its export (the editor previews edits live). */
+function MontagePreview({ url, clipId }: { url: string | null; clipId: string }) {
+  return url ? (
+    <video src={url} controls playsInline className="mx-auto aspect-[9/16] w-full max-w-[320px] rounded-lg bg-black" data-testid="montage-preview" />
+  ) : (
+    <p className="rounded-lg border border-dashed border-line p-6 text-center text-sm text-muted">
+      Rendering… <a className="font-semibold text-accent-2 underline" href={`/clips/${clipId}`}>Open it in the editor</a> to watch it now.
+    </p>
   );
 }

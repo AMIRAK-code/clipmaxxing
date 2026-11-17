@@ -251,7 +251,8 @@ export type JobType =
   | "render"
   | "autoclip"
   | "voiceover"
-  | "cleanup";
+  | "cleanup"
+  | "montage";
 
 export interface Job {
   id: string;
@@ -272,8 +273,38 @@ export interface Job {
 export interface Project {
   id: string;
   title: string;
+  /** clips = one video cut into clips; montage = several videos mixed into short videos */
+  kind: ProjectKind;
+  /** montage: how many videos to make and how long; poolInputs = the inputs the current scene pool was cut from */
+  options: MontageOptions | null;
   created_at: string;
   updated_at: string;
+}
+
+export type ProjectKind = "clips" | "montage";
+
+export interface MontageOptions {
+  count: number;
+  minSec: number;
+  maxSec: number;
+  poolInputs?: string[];
+}
+
+/** One scene of a montage project's scene pool, in pool seconds. */
+export interface MontageScene {
+  id: string;
+  s: number;
+  e: number;
+  /** the input video it was cut from */
+  from: string;
+  /** that video's file name */
+  name: string;
+  score: number;
+  /** where it starts in the input video */
+  srcStart?: number;
+  kind?: "speech" | "action";
+  /** a video of another shape than the pool, shown whole in its middle: pieces of it crop the middle */
+  fit?: boolean;
 }
 
 export interface SourceVideo {
@@ -293,6 +324,10 @@ export interface SourceVideo {
   error: string | null;
   /** how clips of this video are made vertical */
   framing: Framing;
+  /** input = a video the person added; pool = a montage project's scenes joined into one video */
+  role: "input" | "pool";
+  /** pool only: the scenes it is made of */
+  scenes: MontageScene[] | null;
   scene_cuts: number[] | null;
   expires_at: string;
   created_at: string;

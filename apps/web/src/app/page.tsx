@@ -17,7 +17,7 @@ const STATUS: Record<string, { label: string; tone: "default" | "good" | "warn" 
 };
 
 export default function Dashboard() {
-  const projects = listProjects();
+  const projects = listProjects("clips");
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
       <header>

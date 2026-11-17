@@ -5,13 +5,20 @@ import { body, notFound, ok, route } from "@/server/http";
 import { jobsForProject } from "@/server/jobs";
 import { storagePath } from "@/server/paths";
 import { latestRenderByClip } from "@/server/renders";
-import { clipsForProject, getProject, sourceForProject } from "@/server/repo";
+import { clipsForProject, getProject, montageInputs, sourceForProject, sourcesOfProject } from "@/server/repo";
 
 export const dynamic = "force-dynamic";
 
 export const GET = route<{ id: string }>((_req, { id }) => {
   const project = getProject(id) ?? notFound();
-  return ok({ project, source: sourceForProject(id) ?? null, clips: clipsForProject(id), jobs: jobsForProject(id, 20), renders: latestRenderByClip(id) });
+  return ok({
+    project,
+    source: sourceForProject(id) ?? null,
+    inputs: project.kind === "montage" ? montageInputs(id) : undefined,
+    clips: clipsForProject(id),
+    jobs: jobsForProject(id, 20),
+    renders: latestRenderByClip(id),
+  });
 });
 
 export const PATCH = route<{ id: string }>(async (req, { id }) => {
@@ -34,9 +41,9 @@ function removeDir(key: string): void {
 /** Delete a project and every file that belongs to it. */
 export const DELETE = route<{ id: string }>((_req, { id }) => {
   getProject(id) ?? notFound();
-  const source = sourceForProject(id);
   const dirs = new Set<string>();
-  if (source) dirs.add(`sources/${source.id}`);
+  for (const s of sourcesOfProject(id)) dirs.add(`sources/${s.id}`); // a montage has several
+
   for (const c of clipsForProject(id)) dirs.add(`clips/${c.id}`);
   // Jobs go with the project (cascade); the worker notices its job is gone at its next progress step.
   run("delete from projects where id = ?", id);

@@ -128,6 +128,12 @@ On the **Projects** home page: drop a file (MP4, MOV, MKV or WebM, up to 5 GB; u
 - **Find clips**: transcribes (if needed), splits the video into candidate windows, scores them, picks the best non-overlapping ones and reframes each to 9:16. You then review them.
 - **AutoClip**: does the same, then also adds captions and renders the top clips in one go, ready to post.
 
+### Montage
+
+The **Montage** page mixes several videos into short ones. Drop in your videos (any number, up to 5 GB each), choose **how many videos** to make and their **shortest and longest length** (10 to 20 seconds by default), and press **Make montages**. KLIPZ transcribes every video, picks its moments where something happens (lively or emphatic speech, loud bursts, fast cuts; each scene 1.2 to 4 seconds, never cutting a word in half), and makes each montage from scenes of different videos in a random order, never two scenes of the same video in a row when another one is available and never the same set of scenes twice. The montages are rendered right away.
+
+Montages have **no captions**. In the editor a montage opens on its **Scenes** tab: reorder or delete its scenes, add any other scene from your videos, **mute** the video, switch **captions** on, and add a **hook title card** (its style is in the Overlays tab). On the montage's page, **Make more montages** adds new ones; after **Add videos**, the next montages are cut from all of them.
+
 ### Reviewing clips
 
 Clips are ranked by a 0 to 100 score: green 75 and up, amber 50 to 74, red below 50. The breakdown shows hook, context, emotion, payoff and energy, and which scorer produced it: **Claude** (Anthropic key set), **Ollama** (local), or **Heuristic** (offline default, based on speech/audio/scene-cut signals). Scores are a ranking aid, not a prediction of views. For each clip you can **keep** or **discard** it, play a preview (with the blurred letterbox background if the crop is a letterbox), and **trim** the start/end with handles. Discarded clips stay in a collapsible list so you can bring them back.

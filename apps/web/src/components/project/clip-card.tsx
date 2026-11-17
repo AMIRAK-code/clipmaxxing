@@ -1,6 +1,6 @@
 "use client";
 
-import type { Clip, Render } from "@klipz/shared";
+import { totalDuration, type Clip, type Render } from "@klipz/shared";
 import { Check, Download, Pencil, RotateCcw, Send, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -42,8 +42,11 @@ export function ClipCard({
   onSelect,
   onStatus,
   onExport,
+  montage = false,
 }: {
   clip: Clip;
+  /** a montage: its length is its scenes', not the pool range it spans */
+  montage?: boolean;
   /** newest render of this clip, if any */
   render?: Render;
   rank: number;
@@ -92,7 +95,16 @@ export function ClipCard({
         </div>
         {clip.hook ? <p className="line-clamp-2 text-sm italic text-fg/90">&ldquo;{clip.hook}&rdquo;</p> : null}
         <p className="text-xs tabular-nums text-muted">
-          {formatDuration(clip.start_sec)} – {formatDuration(clip.end_sec)} · {Math.round(len)} s
+          {montage && clip.edit_state ? (
+            <>
+              {clip.edit_state.video.length} scene{clip.edit_state.video.length === 1 ? "" : "s"} ·{" "}
+              {Math.round(totalDuration(clip.edit_state.video))} s
+            </>
+          ) : (
+            <>
+              {formatDuration(clip.start_sec)} – {formatDuration(clip.end_sec)} · {Math.round(len)} s
+            </>
+          )}
         </p>
         <Breakdown clip={clip} />
         {clip.reason ? <p className="line-clamp-3 text-xs text-muted">{clip.reason}</p> : null}

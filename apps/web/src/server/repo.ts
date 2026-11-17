@@ -1,5 +1,5 @@
-import type { Clip, Job, Post, Project, Render, SocialAccount, SourceVideo, Word, Sentence } from "@klipz/shared";
-import { all, get, newId, row, rows, run } from "./db";
+import type { Clip, Job, MontageOptions, Post, Project, ProjectKind, Render, SocialAccount, SourceVideo, Word, Sentence } from "@klipz/shared";
+import { get, newId, row, rows, run } from "./db";
 
 export interface ProjectSummary extends Project {
   source: SourceVideo | null;
@@ -17,8 +17,10 @@ export interface Transcript {
   model: string | null;
 }
 
-export function listProjects(): ProjectSummary[] {
-  const projects = all<Project>("select * from projects order by created_at desc");
+export function listProjects(kind?: ProjectKind): ProjectSummary[] {
+  const projects = kind
+    ? rows<Project>("projects", "select * from projects where kind = ? order by created_at desc", kind)
+    : rows<Project>("projects", "select * from projects order by created_at desc");
   return projects.map((p) => {
     const source = row<SourceVideo>("source_videos", "select * from source_videos where project_id = ? order by created_at limit 1", p.id) ?? null;
     const agg = get<{ n: number; top: number | null }>(
@@ -29,12 +31,25 @@ export function listProjects(): ProjectSummary[] {
   });
 }
 
-export const getProject = (id: string) => get<Project>("select * from projects where id = ?", id);
+export const getProject = (id: string) => row<Project>("projects", "select * from projects where id = ?", id);
 
 export const getSource = (id: string) => row<SourceVideo>("source_videos", "select * from source_videos where id = ?", id);
 
+/** The video a project's clips are cut from: its only video, or for a montage the newest scene pool. */
 export const sourceForProject = (projectId: string) =>
-  row<SourceVideo>("source_videos", "select * from source_videos where project_id = ? order by created_at limit 1", projectId);
+  row<SourceVideo>(
+    "source_videos",
+    "select * from source_videos where project_id = ? order by role = 'pool' desc, case when role = 'pool' then created_at end desc, created_at limit 1",
+    projectId,
+  );
+
+/** Every video of a project, scene pools included. */
+export const sourcesOfProject = (projectId: string) =>
+  rows<SourceVideo>("source_videos", "select * from source_videos where project_id = ? order by created_at", projectId);
+
+/** The videos a montage is made from. */
+export const montageInputs = (projectId: string) =>
+  rows<SourceVideo>("source_videos", "select * from source_videos where project_id = ? and role = 'input' and status <> 'deleted' order by created_at", projectId);
 
 export const getTranscript = (sourceVideoId: string) =>
   row<Transcript>("transcripts", "select * from transcripts where source_video_id = ?", sourceVideoId);
@@ -55,9 +70,15 @@ export const latestReadyRender = (clipId: string) =>
 export const activeJobs = (projectId: string) =>
   rows<Job>("jobs", "select * from jobs where project_id = ? and status in ('queued','running') order by created_at", projectId);
 
-export function createProject(title: string): Project {
+export function createProject(title: string, kind: ProjectKind = "clips", options: MontageOptions | null = null): Project {
   const id = newId();
-  run("insert into projects (id, title) values (?, ?)", id, title.slice(0, 160) || "Untitled");
+  run(
+    "insert into projects (id, title, kind, options) values (?, ?, ?, ?)",
+    id,
+    title.slice(0, 160) || "Untitled",
+    kind,
+    options ? JSON.stringify(options) : null,
+  );
   return getProject(id)!;
 }
 

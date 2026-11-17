@@ -9,11 +9,12 @@ import { api, cn, formatBytes } from "@/lib/utils";
 
 const MAX_BYTES = 5 * 1024 ** 3;
 
-/** Upload a file in ordered chunks; retries a failed chunk from the offset the server reports. */
-async function uploadFile(file: File, onProgress: (fraction: number) => void): Promise<string> {
+/** Upload a file in ordered chunks; retries a failed chunk from the offset the server reports. Without
+ * `projectId` the upload makes a new project; with it the video is added to that project. */
+export async function uploadFile(file: File, onProgress: (fraction: number) => void, projectId?: string): Promise<string> {
   const start = await api<{ projectId: string; sourceId: string; chunkSize: number }>("/api/uploads", {
     method: "POST",
-    json: { filename: file.name, size: file.size },
+    json: { filename: file.name, size: file.size, ...(projectId ? { projectId } : {}) },
   });
   let offset = 0;
   let failures = 0;

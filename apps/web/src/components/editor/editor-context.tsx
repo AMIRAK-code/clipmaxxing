@@ -59,7 +59,7 @@ export interface EditorCtx {
   showHelp(): void;
 }
 
-export type InspectorTab = "captions" | "video" | "media" | "text" | "overlays" | "export";
+export type InspectorTab = "scenes" | "captions" | "video" | "media" | "text" | "overlays" | "export";
 
 const Ctx = createContext<EditorCtx | null>(null);
 export const EditorProvider = Ctx.Provider;

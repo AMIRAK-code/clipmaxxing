@@ -80,7 +80,9 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
   const { store, playhead, view, save } = state;
   const playerRef = useRef<PlayerRef | null>(null);
   const autosaver = useRef<Autosaver | null>(null);
-  const [tab, setTab] = useState<InspectorTab>("captions");
+  // a montage is cut from a scene pool: its Scenes tab comes first
+  const scenes = source.role === "pool" ? (source.scenes ?? []) : null;
+  const [tab, setTab] = useState<InspectorTab>(scenes ? "scenes" : "captions");
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -188,7 +190,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
         ) : null}
         <div className="flex min-h-0 flex-1">
           <Preview />
-          <Inspector tab={tab} setTab={setTab} words={words} initialRenders={initialRenders} initialJobs={initialJobs} />
+          <Inspector tab={tab} setTab={setTab} words={words} initialRenders={initialRenders} initialJobs={initialJobs} scenes={scenes} />
         </div>
         <Timeline />
         <ShortcutsDialog open={help} onClose={() => setHelp(false)} />

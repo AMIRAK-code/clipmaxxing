@@ -153,6 +153,56 @@ their words correctly (it used to lay Persian words out left to right, in a syst
   isolated data folder (choices show at once and survive a reload). Tests: `packages/shared/src/hook-style.test.ts`,
   `packages/video/src/hook-card.test.ts`, store test, `apps/worker/tests/test_hook_style.py`.
 
+### New after v0.2.2: Smart Edit cuts and clip boundaries (not released yet)
+- `smart_edit.keep_ranges`: pauses over 0.7 s are cut (was 0.45), keeping 0.28 s after speech and 0.15 s
+  before it (was 0.12 both sides); cuts removing under 0.25 s are skipped; the air never reaches into a cut
+  filler. On the owner's 33 min English video: 2,581 cuts -> 1,387, cuts closer than 0.2 s to a word 100 % -> 0.
+- `segment.boundaries()`: a clip starts only where a sentence starts and ends only on a finished thought
+  (full stop / long pause; no punctuation in the transcript -> pauses decide), never on a question answered
+  within 3 s; windows run past their target length to finish the sentence. The air around a clip stops
+  half way to the neighbouring speech.
+- `heuristics`: Unicode word tokens (accented Latin words were split; Persian / Arabic had no words at all),
+  `؟ ۔ 。` end sentences, Persian / Arabic / Urdu weak openers. Side effect: Smart Edit now emphasises
+  Persian keywords like Latin ones (test_fastrender adjusted).
+
+### New after v0.2.2: Montage (not released yet)
+Several uploaded videos -> their exciting scenes -> N short videos in random order (`/montage`).
+- Data: migration `0003_montage.sql`: `projects.kind` (`clips` | `montage`), `projects.options`
+  (`{count, minSec, maxSec, poolInputs}`), `source_videos.role` (`input` | `pool`), `source_videos.scenes`.
+- Worker `steps/montage.py`, job `montage` (`{project_id, count, minSec, maxSec}`): ingests + transcribes every
+  input, `find_scenes()` (phrases split on 0.35 s pauses scored on lively words + the video's own loudness
+  baseline; 2.5 s windows scored on sound bursts + shot changes, snapped to cuts, never splitting a word),
+  then cuts all scenes into ONE "scene pool" video (`pool_args`: fill-crop to the most common shape, 30 fps,
+  48 kHz) registered as a source with role `pool`, its scene list and the inputs' words moved to pool time.
+  Every montage is an ordinary clip of the pool (start 0, end = pool length; edit pieces = scenes, `auto:
+  false`, captions off but all words present, hook off) so the editor, both renderers, captions and the
+  hook card work unchanged. One crop track (face tracking over the pool) is shared by all its montages.
+  `compose()` draws scenes weighted by score and lower use, spreads videos, shortens the last scene to fit
+  the maximum, never repeats a scene set, and orders them so a video never follows itself when avoidable.
+  "Make more" reuses the pool while `poolInputs` matches; new videos -> a new pool (old montages keep theirs).
+  A video of another shape than the pool (a phone video among landscape ones) is put whole in the middle of
+  the pool frame over a blurred copy (`pool_args`), its scenes are marked `fit`, and their pieces get a
+  centred `frame` (`CENTRE_CROP`; the editor's "add scene" does the same), so they fill the 9:16 screen
+  instead of being letterboxed by the face tracking. No video gets more scenes in a montage than all the
+  others plus one (`_pick`), so they can always alternate.
+- Web: `/montage` page (`new-montage.tsx`: multi-file upload, count + length range), API `POST /api/montages`
+  (create) and `POST /api/montages/[id]` (queue the job; 409 while uploading), sidebar entry. The project page
+  shows `montage-panel.tsx` (videos, Add videos, Make more montages, job progress) instead of Find clips /
+  AutoClip / framing, hides trim, and previews montages by their render. `sourceForProject()` returns the
+  newest pool for montage projects; project delete removes every source folder. Editor: a **Scenes** tab
+  (`scenes-panel.tsx`, montage clips only) to reorder / delete / add scenes, mute (`lib/montage.ts`
+  recipes), captions on/off and hook text. The home page lists clip projects only.
+- Tests: `apps/worker/tests/test_montage.py` (scene finding, composing, pool words, the whole job on two
+  synthetic videos incl. "make more"), `apps/web/src/server/montage.test.ts` (API + editor recipes).
+- Verified in an isolated data folder through the real API (upload in chunks -> job -> renders): three
+  40 s clips of a real video + a synthetic vertical one -> 28 scenes, pool cut in ~25 s, 3 montages of
+  13-20 s rendered by the fast renderer, whole job ~3.5 min (mostly Whisper on CPU). In the editor: Scenes
+  tab, add scene, mute (export measured silent), captions on (Persian, right to left) and a hook card, all
+  saved and drawn in the export.
+- Not done: the Studio renderer was not compared frame by frame on a montage (same edit features as any
+  clip); montage scenes are found without an AI model (the AI scorer is not used); no thumbnails in the
+  Scenes tab; the installer was not rebuilt.
+
 ## How it was verified (v0.2.1)
 
 - `npx vitest run`: 501 passed. Worker `pytest`: 218 passed, 2 skipped (the slow real-Whisper tests were not run this time).

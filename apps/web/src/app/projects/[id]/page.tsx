@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { ProjectView } from "@/components/project/project-view";
 import { jobsForProject, workerHeartbeat } from "@/server/jobs";
 import { latestRenderByClip } from "@/server/renders";
-import { clipsForProject, getProject, sourceForProject } from "@/server/repo";
+import { clipsForProject, getProject, montageInputs, sourceForProject } from "@/server/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   if (!project) notFound();
   return (
     <ProjectView
-      initial={{ project, source: sourceForProject(id) ?? null, clips: clipsForProject(id), jobs: jobsForProject(id, 20), renders: latestRenderByClip(id) }}
+      initial={{
+        project,
+        source: sourceForProject(id) ?? null,
+        inputs: project.kind === "montage" ? montageInputs(id) : undefined,
+        clips: clipsForProject(id),
+        jobs: jobsForProject(id, 20),
+        renders: latestRenderByClip(id),
+      }}
       initialWorkerAlive={workerHeartbeat().alive}
     />
   );
