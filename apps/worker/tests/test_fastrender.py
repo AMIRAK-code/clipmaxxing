@@ -562,3 +562,58 @@ def test_render_persian_clip(tmp_path: Path, sample_video: Path):
     assert _probe_frames(out) == info["frames"] == m.duration_in_frames(edit["video"])
     assert "shaping=complex" in (tmp_path / "work" / "graph.txt").read_text(encoding="utf-8")
     assert (tmp_path / "work" / "fonts" / fallback_font().file).exists()
+
+
+# ── hook text styles ──────────────────────────────────────────────────────
+def _hook_events(edit: dict) -> list[str]:
+    total = m.duration_in_frames(edit["video"])
+    script = ass.build_ass(edit, [], total, draw_dim=False) or ""
+    return [ln for ln in script.splitlines() if ln.startswith("Dialogue: ") and ln.split(",")[0][-1] in "0123"]
+
+
+def test_styled_hook_uses_its_font_colours_outline_and_no_card_when_transparent():
+    edit = edit_for()
+    edit["captions"]["enabled"] = False
+    edit["hook"]["style"] = {"fontFamily": "Bangers", "fontSize": 110, "color": "#FFE600", "boxColor": "transparent",
+                             "strokeColor": "#000000", "strokeWidth": 14, "shadow": "0 8px 0 rgba(0,0,0,0.8)", "dim": 0.3}
+    events = _hook_events(edit)
+    text = [e for e in events if e.startswith("Dialogue: 3,")]
+    assert text and all("Bangers" in e and r"\1c&H00E6FF&" in e and r"\3c&H000000&" in e for e in text)
+    # outline = strokeWidth / 2 and the hard shadow 8 px, both scaled by the card's bounce (0.85 .. ~1.03 overshoot)
+    import re
+    borders = [float(re.search(r"\\bord([\d.]+)", e).group(1)) for e in text]
+    shads = [float(re.search(r"\\yshad([\d.]+)", e).group(1)) for e in text]
+    assert all(5.9 <= b <= 7.3 for b in borders) and min(abs(b - 7.0) for b in borders) < 0.02
+    assert all(6.7 <= s <= 8.4 for s in shads) and min(abs(s - 8.0) for s in shads) < 0.03
+    assert not [e for e in events if e.startswith(("Dialogue: 1,", "Dialogue: 2,"))]  # no card, no card shadow
+    dim = ass.hook_dim(edit, m.duration_in_frames(edit["video"]))
+    assert max(a for _n, a in dim) == pytest.approx(0.3, abs=1e-3)
+
+
+def test_styled_hook_glow_is_drawn_between_card_and_text_and_lowercase_is_kept():
+    edit = edit_for()
+    edit["captions"]["enabled"] = False
+    edit["hook"]["text"] = "Wait for it"
+    edit["hook"]["style"] = {"uppercase": False, "shadow": "0 0 24px rgba(57,255,20,0.9)", "boxColor": "rgba(0,0,0,0.6)"}
+    events = _hook_events(edit)
+    assert any("Wait for it" in e for e in events if e.startswith("Dialogue: 3,"))
+    glows = [e for e in events if e.startswith("Dialogue: 2,") and r"\blur" in e and r"\p1" not in e]
+    assert glows and r"\1c&H14FF39&" in glows[0]
+
+
+def test_dim_zero_draws_no_dim_and_every_hook_preset_is_drawn():
+    edit = edit_for()
+    edit["hook"]["style"] = {"dim": 0}
+    assert ass.hook_dim(edit, m.duration_in_frames(edit["video"])) == []
+    for preset in ass.HOOK_STYLE_PRESETS:
+        e = edit_for()
+        e["hook"]["style"] = {k: v for k, v in preset.items() if k != "name"}
+        assert _hook_events(e), preset["presetId"]  # drawn by the fast renderer, never refused
+
+
+def test_hook_in_a_font_that_is_not_bundled_falls_back_to_studio():
+    edit = edit_for()
+    edit["hook"]["style"] = {"fontFamily": "Comic Sans MS"}
+    total = m.duration_in_frames(edit["video"])
+    with pytest.raises(ass.Unsupported, match="not bundled"):
+        ass.build_ass(edit, [], total)

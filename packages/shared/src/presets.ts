@@ -1,4 +1,4 @@
-import type { CaptionStyle, EditState, LookId, Provider, VideoPiece, Word } from "./types";
+import type { CaptionStyle, EditState, HookStyle, LookId, Provider, VideoPiece, Word } from "./types";
 import { uid, wordsToCaptionWords } from "./timeline";
 import { emojiFor, heuristicEmphasis } from "./captions";
 
@@ -194,6 +194,80 @@ export function resolveCaptionStyle(
   const found =
     custom.find((s) => s.id === styleId) ?? CAPTION_PRESETS.find((s) => s.id === styleId) ?? CAPTION_PRESETS[0]!;
   return { ...found, ...overrides };
+}
+
+// ── hook title card ─────────────────────────────────────────────────────
+/** The hook card's original look: white heavy uppercase text on a purple card, video dimmed 38 %. */
+export const DEFAULT_HOOK_STYLE: HookStyle = {
+  fontFamily: "Montserrat",
+  fontSize: 92,
+  uppercase: true,
+  color: "#FFFFFF",
+  boxColor: "rgba(124,58,237,0.92)",
+  strokeColor: "#000000",
+  strokeWidth: 0,
+  shadow: "none",
+  dim: 0.38,
+};
+
+/** Ready-made hook looks. Every value is one the fast renderer draws (bundled fonts, plain colours). */
+export const HOOK_STYLE_PRESETS: (HookStyle & { presetId: string; name: string })[] = [
+  { ...DEFAULT_HOOK_STYLE, presetId: "classic", name: "Classic" },
+  {
+    ...DEFAULT_HOOK_STYLE,
+    presetId: "bold-outline",
+    name: "Bold outline",
+    fontSize: 100,
+    boxColor: "transparent",
+    strokeWidth: 14,
+    shadow: "0 6px 0 rgba(0,0,0,0.55)",
+    dim: 0.3,
+  },
+  { ...DEFAULT_HOOK_STYLE, presetId: "yellow-box", name: "Yellow box", fontFamily: "Archivo Black", fontSize: 86, color: "#111111", boxColor: "#FFE600", dim: 0.3 },
+  {
+    ...DEFAULT_HOOK_STYLE,
+    presetId: "minimal",
+    name: "Minimal",
+    fontFamily: "Inter",
+    fontSize: 84,
+    uppercase: false,
+    boxColor: "transparent",
+    shadow: "0 3px 12px rgba(0,0,0,0.7)",
+    dim: 0.45,
+  },
+  {
+    ...DEFAULT_HOOK_STYLE,
+    presetId: "comic",
+    name: "Comic",
+    fontFamily: "Bangers",
+    fontSize: 116,
+    color: "#FFE600",
+    boxColor: "transparent",
+    strokeWidth: 14,
+    shadow: "0 8px 0 rgba(0,0,0,0.8)",
+    dim: 0.3,
+  },
+  {
+    ...DEFAULT_HOOK_STYLE,
+    presetId: "neon",
+    name: "Neon",
+    fontFamily: "Bebas Neue",
+    fontSize: 128,
+    color: "#39FF14",
+    boxColor: "rgba(0,0,0,0.6)",
+    shadow: "0 0 24px rgba(57,255,20,0.9)",
+    dim: 0.35,
+  },
+];
+
+/** The hook card's look: the stored partial style over the default. */
+export function resolveHookStyle(hook: Pick<EditState["hook"], "style">): HookStyle {
+  return { ...DEFAULT_HOOK_STYLE, ...(hook.style ?? {}) };
+}
+
+/** The one bundled weight of a font family (900 for unknown families, as the default hook uses). */
+export function bundledWeight(family: string): number {
+  return FONT_FILES[family]?.[0]?.weight ?? 900;
 }
 
 /** "LUT-style" looks, implemented as CSS filter chains so preview == render. */

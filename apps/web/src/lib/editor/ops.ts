@@ -1,5 +1,6 @@
 import {
   CAPTION_PRESETS,
+  HOOK_STYLE_PRESETS,
   cleanFrame,
   editWordText,
   pieceDuration,
@@ -15,6 +16,7 @@ import {
   type BrollItem,
   type CaptionStyle,
   type EditState,
+  type HookStyle,
   type LookId,
   type ManualFrame,
   type Provider,
@@ -229,6 +231,29 @@ function sanitiseTimed<T extends { start?: number; duration?: number; volume?: n
 export const setHook = (patch: Partial<EditState["hook"]>): Recipe => (d) => {
   Object.assign(d.hook, patch);
   d.hook.durationSec = clampNum(d.hook.durationSec, 0.5, 10);
+};
+
+const HOOK_STYLE_LIMITS: Partial<Record<keyof HookStyle, [number, number]>> = { fontSize: [40, 180], strokeWidth: [0, 30], dim: [0, 0.8] };
+
+/** Change one property of the hook card's look; a manual change no longer matches a preset. */
+export const setHookStyle = <K extends keyof HookStyle>(key: K, value: HookStyle[K]): Recipe => (d) => {
+  const style = (d.hook.style ??= {}) as Partial<HookStyle>;
+  const limits = HOOK_STYLE_LIMITS[key];
+  style[key] = (limits && typeof value === "number" ? clampNum(value, limits[0], limits[1]) : value) as HookStyle[K];
+  if (key !== "presetId") delete style.presetId;
+};
+
+/** Take a ready-made hook look as a whole (every field is set, so later preset changes do not leak in). */
+export const applyHookPreset = (presetId: string): Recipe => (d) => {
+  const preset = HOOK_STYLE_PRESETS.find((p) => p.presetId === presetId);
+  if (!preset) return;
+  const { name: _name, ...style } = preset;
+  d.hook.style = { ...style };
+};
+
+/** Back to the original look. */
+export const resetHookStyle = (): Recipe => (d) => {
+  delete d.hook.style;
 };
 export const setProgressBar = (patch: Partial<EditState["progressBar"]>): Recipe => (d) => {
   Object.assign(d.progressBar, patch);

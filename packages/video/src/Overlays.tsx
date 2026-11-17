@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
-import { OUT_H, OUT_W, SAFE_ZONES, baseDirection, clampToSafeZone, fontStack, type EditState } from "@klipz/shared";
+import { OUT_H, OUT_W, SAFE_ZONES, baseDirection, bundledWeight, clampToSafeZone, fontStack, resolveHookStyle, type EditState } from "@klipz/shared";
 import { hookEnvelope, entrance } from "./anim";
 import { fitScale, measureText } from "./fit";
 import { maxCaptionWidth } from "./Captions";
@@ -14,8 +14,13 @@ export const HookCard: React.FC<{ edit: EditState }> = ({ edit }) => {
 
   const env = hookEnvelope(frame, durF, fps);
   const inAnim = entrance("bounce", Math.min(frame, durF - frame), fps);
-  const fontSize = 92;
-  const label = text.trim().toUpperCase();
+  // same look as fastrender/ass.py add_hook(): the stored style over DEFAULT_HOOK_STYLE
+  const style = resolveHookStyle(edit.hook);
+  const { fontFamily, fontSize } = style;
+  const fontWeight = bundledWeight(fontFamily);
+  const label = style.uppercase ? text.trim().toUpperCase() : text.trim();
+  const dim = Math.min(0.8, Math.max(0, style.dim));
+  const hasBox = style.boxColor !== "transparent";
   // wrap into lines of <= 14 chars, then shrink if still too wide
   const lines: string[] = [];
   let cur = "";
@@ -26,7 +31,7 @@ export const HookCard: React.FC<{ edit: EditState }> = ({ edit }) => {
     } else cur = cur ? `${cur} ${word}` : word;
   }
   if (cur) lines.push(cur);
-  const font = { fontFamily: "Montserrat", fontWeight: 900, fontSize, letterSpacing: 0 };
+  const font = { fontFamily, fontWeight, fontSize, letterSpacing: 0 };
   const widest = lines.reduce((m, l) => Math.max(m, measureText(l, font)), 0);
   const scale = fitScale(widest + 80, maxCaptionWidth(edit.safeZone));
   const zone = edit.safeZone === "none" ? null : SAFE_ZONES[edit.safeZone];
@@ -34,7 +39,7 @@ export const HookCard: React.FC<{ edit: EditState }> = ({ edit }) => {
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
-      <AbsoluteFill style={{ background: "rgba(0,0,0,0.38)", opacity: env }} />
+      {dim > 0 ? <AbsoluteFill style={{ background: `rgba(0,0,0,${dim})`, opacity: env }} /> : null}
       <div style={{ position: "absolute", left: 0, top: pos * OUT_H, width: OUT_W, display: "flex", justifyContent: "center" }}>
         <div
           style={{
@@ -42,15 +47,18 @@ export const HookCard: React.FC<{ edit: EditState }> = ({ edit }) => {
             opacity: env,
             textAlign: "center",
             direction: baseDirection([label]),
-            fontFamily: fontStack("Montserrat"),
-            fontWeight: 900,
+            fontFamily: fontStack(fontFamily),
+            fontWeight,
             fontSize,
             lineHeight: 1.1,
-            color: "#FFFFFF",
-            background: "rgba(124,58,237,0.92)",
+            color: style.color,
+            background: hasBox ? style.boxColor : "transparent",
             padding: "28px 40px",
             borderRadius: 32,
-            boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+            boxShadow: hasBox ? "0 10px 40px rgba(0,0,0,0.5)" : "none",
+            WebkitTextStroke: style.strokeWidth > 0 ? `${style.strokeWidth}px ${style.strokeColor}` : undefined,
+            paintOrder: "stroke fill",
+            textShadow: style.shadow && style.shadow !== "none" ? style.shadow : undefined,
             whiteSpace: "nowrap",
           }}
         >

@@ -366,17 +366,28 @@ def add_captions(script: Script, edit: dict[str, Any], custom_styles: Sequence[d
 
 
 # ── hook card ─────────────────────────────────────────────────────────────
-HOOK_FONT_SIZE = 92.0
-HOOK_BG = Color(124, 58, 237, 0.92)
-HOOK_DIM = Color(0, 0, 0, 0.38)
-HOOK_SHADOW = Color(0, 0, 0, 0.5)
-WHITE = Color(255, 255, 255)
+# The card's look comes from the edit's hook.style over the default look (presets.json, generated from
+# DEFAULT_HOOK_STYLE / HOOK_STYLE_PRESETS in packages/shared/src/presets.ts); Overlays.tsx draws the same.
+DEFAULT_HOOK_STYLE: dict[str, Any] = dict(m._PRESETS["defaultHookStyle"])
+HOOK_STYLE_PRESETS: list[dict[str, Any]] = list(m._PRESETS.get("hookStyles") or [])
+HOOK_DIM = Color(0, 0, 0, float(DEFAULT_HOOK_STYLE["dim"]))  # the default dim
+HOOK_SHADOW = Color(0, 0, 0, 0.5)  # the card's drop shadow (CSS box-shadow 0 10px 40px)
 
 
-def hook_lines(text: str) -> list[str]:
+def resolve_hook_style(edit: dict[str, Any]) -> dict[str, Any]:
+    """resolveHookStyle(): the stored partial style over the default look."""
+    hook = edit.get("hook") or {}
+    return {**DEFAULT_HOOK_STYLE, **(hook.get("style") or {})}
+
+
+def _hook_dim_alpha(style: dict[str, Any]) -> float:
+    return min(0.8, max(0.0, float(style.get("dim") or 0.0)))
+
+
+def hook_lines(text: str, uppercase: bool = True) -> list[str]:
     lines: list[str] = []
     cur = ""
-    for word in text.strip().upper().split():
+    for word in (text.strip().upper() if uppercase else text.strip()).split():
         if cur and len(cur) + 1 + len(word) > 14:
             lines.append(cur)
             cur = word
@@ -397,18 +408,16 @@ def hook_dim(edit: dict[str, Any], total_frames: int) -> list[tuple[int, float]]
         return []
     dur_f = m.js_round(float(hook.get("durationSec") or 0) * m.OUT_FPS)
     last = min(dur_f, total_frames)
-    if last <= 0:
+    alpha = _hook_dim_alpha(resolve_hook_style(edit))
+    if last <= 0 or alpha <= 0:
         return []
     out: list[tuple[int, float]] = []
     for n in range(last):
-        a = round(HOOK_DIM.a * m.hook_envelope(n, dur_f), 3)
+        a = round(alpha * m.hook_envelope(n, dur_f), 3)
         if not out or out[-1][1] != a:
             out.append((n, a))
     out.append((last, 0.0))
     return out
-
-
-HOOK_FONT = "Montserrat"
 
 
 def _hook_text(edit: dict[str, Any]) -> Optional[str]:
@@ -424,17 +433,30 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: 
     dur_f = m.js_round(float((edit.get("hook") or {}).get("durationSec") or 0) * m.OUT_FPS)
     if dur_f <= 0:
         return
-    fnt = _need_font(HOOK_FONT, hook_lines(text), script.shaped)
+    style = resolve_hook_style(edit)
+    size = float(style["fontSize"])
+    raw_lines = hook_lines(text, bool(style.get("uppercase", True)))
+    fnt = _need_font(str(style["fontFamily"]), raw_lines, script.shaped)
+    fill = _color(str(style["color"]), "hook text colour")
+    box = _color(str(style["boxColor"]), "hook card colour")
+    dim = Color(0, 0, 0, _hook_dim_alpha(style))
+    stroke = float(style.get("strokeWidth") or 0.0)
+    stroke_color = _color(str(style["strokeColor"]), "hook outline colour") if stroke > 0 else None
+    shadows = parse_shadows(str(style.get("shadow") or "none"))
+    if shadows is None:
+        raise Unsupported(f"hook shadow '{style.get('shadow')}' is not understood")
+    hard = [s for s in shadows if s.blur <= 0]
+    glows = [s for s in shadows if s.blur > 0]
     # a line is one event: libass orders its words, right to left when most of the hook's letters are
     rtl = script.shaped and bidi.base_direction([text]) == bidi.RTL
-    lines = [dataclasses.replace(_label(l, fnt, HOOK_FONT_SIZE, 0.0, script.shaped), rtl=rtl) for l in hook_lines(text)]
+    lines = [dataclasses.replace(_label(l, fnt, size, 0.0, script.shaped), rtl=rtl) for l in raw_lines]
     widest = max(l.width for l in lines)
     safe_zone = str(edit.get("safeZone") or "none")
     fit = fit_scale(widest + 80, m.max_caption_width(safe_zone))
     zone = m.SAFE_ZONES.get(safe_zone) if safe_zone != "none" else None
     cy = m.clamp_to_safe_zone(0.3, zone, 0.2) * m.OUT_H
     cx = m.OUT_W / 2
-    line_h = HOOK_FONT_SIZE * 1.1
+    line_h = size * 1.1
     card_w, card_h = widest + 2 * 40, len(lines) * line_h + 2 * 28
 
     def state_at(n: int) -> tuple[float, float]:
@@ -451,11 +473,22 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: 
             if prev is not None and prev[0] > 0.002:
                 env, k = prev
                 if draw_dim:
-                    script.rect(0, start, n, cx, m.OUT_H / 2, m.OUT_W, m.OUT_H, 0, HOOK_DIM, env)
-                script.rect(1, start, n, cx, cy + 10 * k, card_w * k, card_h * k, 32 * k, HOOK_SHADOW, env, blur=20 * k)
-                script.rect(2, start, n, cx, cy, card_w * k, card_h * k, 32 * k, HOOK_BG, env)
+                    script.rect(0, start, n, cx, m.OUT_H / 2, m.OUT_W, m.OUT_H, 0, dim, env)
+                if box.a > 0.002:  # the drop shadow belongs to the card: no card, no shadow
+                    script.rect(1, start, n, cx, cy + 10 * k, card_w * k, card_h * k, 32 * k, HOOK_SHADOW, env, blur=20 * k)
+                    script.rect(2, start, n, cx, cy, card_w * k, card_h * k, 32 * k, box, env)
+                em, border = size * k, stroke / 2 * k
                 for i, line in enumerate(lines):
-                    script.text(3, start, n, fnt, line, cx, cy + (i - (len(lines) - 1) / 2) * line_h * k, HOOK_FONT_SIZE * k, WHITE, env)
+                    y = cy + (i - (len(lines) - 1) / 2) * line_h * k
+                    # text shadows sit above the card and below the text; CSS paints the first one on top
+                    for sh in reversed(glows):
+                        script.text(2, start, n, fnt, line, cx + sh.dx * k, y + sh.dy * k, em, sh.color, env,
+                                    border=border, border_color=sh.color, blur=sh.blur / 2 * k)
+                    for sh in reversed(hard[1:]):
+                        script.text(2, start, n, fnt, line, cx + sh.dx * k, y + sh.dy * k, em, sh.color, env,
+                                    border=border, border_color=sh.color)
+                    script.text(3, start, n, fnt, line, cx, y, em, fill, env, border=border, border_color=stroke_color,
+                                shadow=hard[0] if hard else None, shadow_scale=k)
             prev, start = cur, n
 
 
@@ -467,13 +500,16 @@ def build_script(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], 
     # fallback font, every text is measured the way that shaper sets it.
     text = _hook_text(edit)
     setup = _caption_setup(edit, custom_styles)
+    hook_style = resolve_hook_style(edit)
+    hook_font = str(hook_style["fontFamily"])
+    hook_text_lines = hook_lines(text, bool(hook_style.get("uppercase", True))) if text is not None else []
     script.shaped = bool(
-        (text is not None and _needs_fallback(HOOK_FONT, hook_lines(text)))
+        (text is not None and _needs_fallback(hook_font, hook_text_lines))
         or (setup is not None and _needs_fallback(str(setup[0].get("fontFamily")), [_display(w, setup[0]) for w in setup[1]]))
     )
     # glyphs first: text no bundled font has is the reason to give, before anything is measured
     if text is not None:
-        _need_font(HOOK_FONT, hook_lines(text), script.shaped)
+        _need_font(hook_font, hook_text_lines, script.shaped)
     if setup is not None:
         _need_font(str(setup[0]["fontFamily"]), [_display(w, setup[0]) for w in setup[1]], script.shaped)
     add_hook(script, edit, total_frames, draw_dim)

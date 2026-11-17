@@ -1,4 +1,4 @@
-import { captionWordsOnTimeline, srcToOut, totalDuration } from "@klipz/shared";
+import { captionWordsOnTimeline, DEFAULT_HOOK_STYLE, FONT_FILES, HOOK_STYLE_PRESETS, resolveHookStyle, srcToOut, totalDuration } from "@klipz/shared";
 import { describe, expect, it } from "vitest";
 import { sampleEdit } from "./fixtures";
 import * as ops from "./ops";
@@ -167,6 +167,42 @@ describe("editor store: zoom keyframes, look, overlays", () => {
     for (let i = 0; i < 5; i++) get().undo();
     expect(get().edit.look).toBe("none");
     expect(get().edit.hook.enabled).toBe(false);
+  });
+});
+
+describe("editor store: hook text style", () => {
+  it("applies a preset as a whole, tweaks one property (no longer that preset), clamps, resets and undoes", () => {
+    const { get } = setup();
+    expect(resolveHookStyle(get().edit.hook)).toEqual(DEFAULT_HOOK_STYLE);
+    get().apply(ops.applyHookPreset("comic"));
+    const comic = HOOK_STYLE_PRESETS.find((p) => p.presetId === "comic")!;
+    expect(get().edit.hook.style).toMatchObject({ presetId: "comic", fontFamily: "Bangers", color: comic.color, strokeWidth: comic.strokeWidth });
+    expect(get().edit.hook.style).not.toHaveProperty("name");
+    get().apply(ops.setHookStyle("color", "#ff0000"));
+    expect(get().edit.hook.style).toMatchObject({ fontFamily: "Bangers", color: "#ff0000" });
+    expect(get().edit.hook.style?.presetId).toBeUndefined();
+    get().apply(ops.setHookStyle("fontSize", 999));
+    get().apply(ops.setHookStyle("dim", -1));
+    expect(resolveHookStyle(get().edit.hook)).toMatchObject({ fontSize: 180, dim: 0 });
+    get().apply(ops.resetHookStyle());
+    expect(get().edit.hook.style).toBeUndefined();
+    get().undo();
+    expect(get().edit.hook.style?.fontSize).toBe(180);
+  });
+
+  it("ignores an unknown preset", () => {
+    const { get } = setup();
+    get().apply(ops.applyHookPreset("nope"));
+    expect(get().edit.hook.style).toBeUndefined();
+  });
+
+  it("every hook preset uses a bundled font and plain colours (so the fast renderer can draw it)", () => {
+    const plain = /^(#[0-9a-f]{6}|rgba?\([\d.,\s]+\)|transparent)$/i;
+    for (const p of HOOK_STYLE_PRESETS) {
+      expect(FONT_FILES[p.fontFamily], p.presetId).toBeDefined();
+      for (const c of [p.color, p.boxColor, p.strokeColor]) expect(c, p.presetId).toMatch(plain);
+    }
+    expect(HOOK_STYLE_PRESETS[0]).toMatchObject({ presetId: "classic", ...DEFAULT_HOOK_STYLE });
   });
 });
 

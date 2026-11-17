@@ -186,6 +186,27 @@ export interface ManualFrame {
 
 export const MAX_FRAME_ZOOM = 4;
 
+/**
+ * How the hook title card's text looks. Stored on the edit as a partial: absent fields keep the
+ * default look (DEFAULT_HOOK_STYLE), so edits made before styles existed render exactly as before.
+ * The font weight is not stored: each family is bundled in one weight (FONT_FILES).
+ */
+export interface HookStyle {
+  /** preset this look started from (only used to highlight it in the editor) */
+  presetId?: string;
+  fontFamily: string;
+  fontSize: number; // px at 1080 wide
+  uppercase: boolean;
+  color: string;
+  /** card behind the text, or "transparent" for none */
+  boxColor: string;
+  strokeColor: string;
+  strokeWidth: number;
+  shadow: string; // CSS text-shadow or "none"
+  /** darkening of the video while the card shows, 0 .. 0.8 */
+  dim: number;
+}
+
 export interface EditState {
   version: 1;
   /** set by Smart Edit on edits nobody has touched yet */
@@ -204,7 +225,7 @@ export interface EditState {
   texts: TextItem[];
   zooms: ZoomKey[];
   look: LookId;
-  hook: { enabled: boolean; text: string; durationSec: number };
+  hook: { enabled: boolean; text: string; durationSec: number; style?: Partial<HookStyle> };
   progressBar: { enabled: boolean; color: string; position: "top" | "bottom"; height: number };
   volume: number;
   /** main-audio gain while a ducking item plays */

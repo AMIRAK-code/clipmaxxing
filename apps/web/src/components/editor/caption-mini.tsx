@@ -1,12 +1,38 @@
 "use client";
 
-import type { CaptionStyle } from "@klipz/shared";
+import { bundledWeight, type CaptionStyle, type HookStyle } from "@klipz/shared";
 import type { CSSProperties } from "react";
 
 /** Scale every "Npx" length inside a CSS shadow string. */
 export function scaleShadow(shadow: string, k: number): string {
   if (!shadow || shadow === "none") return "none";
   return shadow.replace(/(-?\d*\.?\d+)px/g, (_m, n: string) => `${Math.round(Number(n) * k * 10) / 10}px`);
+}
+
+/** Small static render of a hook card look (font, colours, card, outline, shadow) for the preset grid. */
+export function HookMini({ style, scale = 0.2, text = "Wait for it" }: { style: HookStyle; scale?: number; text?: string }) {
+  const hasBox = style.boxColor !== "transparent";
+  return (
+    <span
+      data-hook-style={style.presetId ?? "custom"}
+      style={{
+        fontFamily: `"${style.fontFamily}", sans-serif`,
+        fontWeight: bundledWeight(style.fontFamily),
+        fontSize: Math.max(10, style.fontSize * scale),
+        lineHeight: 1.1,
+        color: style.color,
+        background: hasBox ? style.boxColor : "transparent",
+        padding: hasBox ? `${28 * scale}px ${40 * scale}px` : 0,
+        borderRadius: 32 * scale,
+        WebkitTextStroke: style.strokeWidth > 0 ? `${Math.max(0.5, style.strokeWidth * scale)}px ${style.strokeColor}` : undefined,
+        paintOrder: "stroke fill",
+        textShadow: scaleShadow(style.shadow, scale),
+        whiteSpace: "nowrap",
+      }}
+    >
+      {style.uppercase ? text.toUpperCase() : text}
+    </span>
+  );
 }
 
 /**

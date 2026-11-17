@@ -296,5 +296,96 @@
     "file": "vazirmatn-900.woff2",
     "weight": 900
   },
-  "defaultStyleId": "bold-outline"
+  "defaultStyleId": "bold-outline",
+  "defaultHookStyle": {
+    "fontFamily": "Montserrat",
+    "fontSize": 92,
+    "uppercase": true,
+    "color": "#FFFFFF",
+    "boxColor": "rgba(124,58,237,0.92)",
+    "strokeColor": "#000000",
+    "strokeWidth": 0,
+    "shadow": "none",
+    "dim": 0.38
+  },
+  "hookStyles": [
+    {
+      "fontFamily": "Montserrat",
+      "fontSize": 92,
+      "uppercase": true,
+      "color": "#FFFFFF",
+      "boxColor": "rgba(124,58,237,0.92)",
+      "strokeColor": "#000000",
+      "strokeWidth": 0,
+      "shadow": "none",
+      "dim": 0.38,
+      "presetId": "classic",
+      "name": "Classic"
+    },
+    {
+      "fontFamily": "Montserrat",
+      "fontSize": 100,
+      "uppercase": true,
+      "color": "#FFFFFF",
+      "boxColor": "transparent",
+      "strokeColor": "#000000",
+      "strokeWidth": 14,
+      "shadow": "0 6px 0 rgba(0,0,0,0.55)",
+      "dim": 0.3,
+      "presetId": "bold-outline",
+      "name": "Bold outline"
+    },
+    {
+      "fontFamily": "Archivo Black",
+      "fontSize": 86,
+      "uppercase": true,
+      "color": "#111111",
+      "boxColor": "#FFE600",
+      "strokeColor": "#000000",
+      "strokeWidth": 0,
+      "shadow": "none",
+      "dim": 0.3,
+      "presetId": "yellow-box",
+      "name": "Yellow box"
+    },
+    {
+      "fontFamily": "Inter",
+      "fontSize": 84,
+      "uppercase": false,
+      "color": "#FFFFFF",
+      "boxColor": "transparent",
+      "strokeColor": "#000000",
+      "strokeWidth": 0,
+      "shadow": "0 3px 12px rgba(0,0,0,0.7)",
+      "dim": 0.45,
+      "presetId": "minimal",
+      "name": "Minimal"
+    },
+    {
+      "fontFamily": "Bangers",
+      "fontSize": 116,
+      "uppercase": true,
+      "color": "#FFE600",
+      "boxColor": "transparent",
+      "strokeColor": "#000000",
+      "strokeWidth": 14,
+      "shadow": "0 8px 0 rgba(0,0,0,0.8)",
+      "dim": 0.3,
+      "presetId": "comic",
+      "name": "Comic"
+    },
+    {
+      "fontFamily": "Bebas Neue",
+      "fontSize": 128,
+      "uppercase": true,
+      "color": "#39FF14",
+      "boxColor": "rgba(0,0,0,0.6)",
+      "strokeColor": "#000000",
+      "strokeWidth": 0,
+      "shadow": "0 0 24px rgba(57,255,20,0.9)",
+      "dim": 0.35,
+      "presetId": "neon",
+      "name": "Neon"
+    }
+  ]
 }
