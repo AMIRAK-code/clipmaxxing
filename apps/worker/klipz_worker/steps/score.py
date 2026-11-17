@@ -20,6 +20,9 @@ BATCH_SIZE = 8
 W_LLM, W_HYPE, W_CUTS = 0.6, 0.3, 0.1
 W_AUDIO_HYPE, W_TEXT_HYPE = 0.6, 0.4
 LLM_POOL = 96  # an AI model rates at most this many windows per video; the rest keep the built-in rating
+LLM_TIMEOUT_SEC = 300.0  # per request (a local model on a laptop CPU can take minutes for one batch)
+LLM_CONNECT_TIMEOUT_SEC = 10.0
+MAX_FAILED_BATCHES = 2  # in a row; then the remaining batches use the heuristic without calling the model
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 LLM_BLEND = {"hook": 0.35, "context": 0.2, "emotion": 0.2, "payoff": 0.25}
 
@@ -277,7 +280,8 @@ class AnthropicScorer:
         if client is None:
             import anthropic
 
-            client = anthropic.Anthropic(api_key=api_key)
+            # SDK defaults are a 10 min timeout with 2 retries: up to 30 min for one batch while the job looks stuck.
+            client = anthropic.Anthropic(api_key=api_key, timeout=LLM_TIMEOUT_SEC, max_retries=1)
         self.client = client
 
     def _call(self, cands: Sequence[Candidate]) -> Any:
@@ -319,7 +323,7 @@ class OllamaScorer:
         if self.client is not None:
             r = self.client.post(f"{self.url}/api/chat", json=body)
         else:
-            r = httpx.post(f"{self.url}/api/chat", json=body, timeout=300)
+            r = httpx.post(f"{self.url}/api/chat", json=body, timeout=_http_timeout())
         r.raise_for_status()
         return _parse_json(r.json()["message"]["content"])
 
@@ -351,7 +355,7 @@ class OpenAICompatScorer:
         }
         headers = {"authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         post = self.client.post if self.client is not None else httpx.post
-        kwargs: dict[str, Any] = {} if self.client is not None else {"timeout": 300}
+        kwargs: dict[str, Any] = {} if self.client is not None else {"timeout": _http_timeout()}
         r = post(f"{self.url}/chat/completions", json=body, headers=headers, **kwargs)
         if r.status_code == 400 and "response_format" in r.text:
             body.pop("response_format")  # some local servers do not know json mode; the prompt still asks for JSON
@@ -363,17 +367,32 @@ class OpenAICompatScorer:
         return _rate_batched(self._call, cands, self.name)
 
 
+def _http_timeout() -> Any:
+    """Fail fast when the host is unreachable; give a slow (local) model time to answer."""
+    import httpx
+
+    return httpx.Timeout(LLM_TIMEOUT_SEC, connect=LLM_CONNECT_TIMEOUT_SEC)
+
+
 def _rate_batched(call: Any, cands: Sequence[Candidate], name: str) -> list[Rating]:
-    """Rate in batches; ANY error (or missing/invalid items) falls back to heuristics for that part."""
+    """Rate in batches; ANY error (or missing/invalid items) falls back to heuristics for that part.
+    After MAX_FAILED_BATCHES failures in a row (bad key, provider down) the rest is rated by the
+    heuristic straight away instead of waiting for every remaining call to fail."""
     fallback = HeuristicScorer()
     out: list[Optional[Rating]] = [None] * len(cands)
+    failed_in_row = 0
     for lo in range(0, len(cands), BATCH_SIZE):
         batch = list(cands[lo : lo + BATCH_SIZE])
         got: dict[int, Rating] = {}
-        try:
-            got = validate_ratings(call(batch), batch, name)
-        except Exception as e:  # noqa: BLE001
-            log.warning("%s scoring failed for batch at %d (%s); using heuristic", name, lo, e)
+        if failed_in_row < MAX_FAILED_BATCHES:
+            try:
+                got = validate_ratings(call(batch), batch, name)
+                failed_in_row = 0
+            except Exception as e:  # noqa: BLE001
+                failed_in_row += 1
+                log.warning("%s scoring failed for batch at %d (%s); using heuristic", name, lo, e)
+                if failed_in_row == MAX_FAILED_BATCHES and lo + BATCH_SIZE < len(cands):
+                    log.warning("%s failed %d batches in a row; rating the rest with the heuristic", name, failed_in_row)
         for i, c in enumerate(batch):
             out[lo + i] = got.get(i) or fallback._rate_one(c)
     return [r for r in out if r is not None]

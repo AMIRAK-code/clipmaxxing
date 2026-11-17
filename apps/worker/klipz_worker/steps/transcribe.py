@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
 from ..config import Settings
-from ..runner import JobContext, PermanentError
+from ..runner import JobCancelled, JobContext, PermanentError
 from . import segment as seg
 from .ingest import ingest
 
@@ -140,6 +140,8 @@ class FasterWhisperTranscriber:
             try:
                 model = self._load(device, ctype)
                 return self._run(model, audio, duration, on_progress)
+            except JobCancelled:
+                raise  # the user cancelled: do not start over on the CPU
             except Exception as e:  # noqa: BLE001 - any load/inference error falls through to CPU
                 log.warning("faster-whisper on %s/%s failed (%s); trying next option", device, ctype, e)
                 last = e

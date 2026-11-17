@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import bisect
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 import wave
 from functools import lru_cache
 from pathlib import Path
@@ -18,6 +22,64 @@ import numpy as np
 
 class FfmpegError(RuntimeError):
     pass
+
+
+# An ffmpeg run that prints nothing for this long is hung (a stuck network drive, a broken file that
+# makes the decoder spin): it is stopped so the single worker can go on with other jobs.
+STALL_SEC = float(os.environ.get("KLIPZ_FFMPEG_STALL_SEC", "300"))
+PROBE_TIMEOUT_SEC = 120.0
+DECODE_TIMEOUT_SEC = 1800.0
+
+
+def kill_process(proc: subprocess.Popen) -> None:
+    """Stop a child process and everything it started (taskkill /T on Windows); never raises."""
+    if proc.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            proc.kill()
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+class _StallWatch:
+    """Kills `proc` when touch() has not been called for `stall_sec` seconds."""
+
+    def __init__(self, proc: subprocess.Popen, stall_sec: Optional[float] = None):
+        self.proc = proc
+        self.stall_sec = STALL_SEC if stall_sec is None else stall_sec
+        self.last = time.monotonic()
+        self.fired = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._watch, name="ffmpeg-stall-watch", daemon=True)
+        self._thread.start()
+
+    def touch(self) -> None:
+        self.last = time.monotonic()
+
+    def _watch(self) -> None:
+        while not self._stop.wait(min(5.0, self.stall_sec)):
+            if self.proc.poll() is not None:
+                return
+            if time.monotonic() - self.last > self.stall_sec:
+                self.fired = True
+                kill_process(self.proc)
+                return
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def error(self) -> FfmpegError:
+        return FfmpegError(f"ffmpeg made no progress for {self.stall_sec:.0f} s and was stopped")
 
 
 @lru_cache(maxsize=1)
@@ -37,21 +99,32 @@ def run_ffmpeg(
     duration: Optional[float] = None,
     on_progress: Optional[Callable[[float], None]] = None,
 ) -> str:
-    """Run ffmpeg; returns stderr. Reports 0..1 progress when duration is known."""
+    """Run ffmpeg; returns stderr. Reports 0..1 progress when duration is known.
+
+    The process is always stopped when this returns or raises (e.g. JobCancelled from on_progress), and
+    it is stopped if it prints nothing for STALL_SEC (ffmpeg's stats line normally updates twice a second)."""
     cmd = [binaries()[0], "-hide_banner", "-nostdin", "-y", *args]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+    watch = _StallWatch(proc)
     tail: list[str] = []
     assert proc.stderr is not None
-    for line in proc.stderr:
-        tail.append(line)
-        if len(tail) > 400:
-            del tail[:200]
-        if on_progress and duration:
-            m = re.search(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", line)
-            if m:
-                t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                on_progress(min(1.0, t / duration))
-    code = proc.wait()
+    try:
+        for line in proc.stderr:
+            watch.touch()
+            tail.append(line)
+            if len(tail) > 400:
+                del tail[:200]
+            if on_progress and duration:
+                m = re.search(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", line)
+                if m:
+                    t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                    on_progress(min(1.0, t / duration))
+        code = proc.wait()
+    finally:
+        watch.stop()
+        kill_process(proc)
+    if watch.fired:
+        raise watch.error()
     out = "".join(tail)
     if code != 0:
         raise FfmpegError(f"ffmpeg exited {code}: {out[-1500:]}")
@@ -60,7 +133,10 @@ def run_ffmpeg(
 
 def probe(path: Path | str) -> dict:
     cmd = [binaries()[1], "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)]
-    res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=PROBE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired as e:
+        raise FfmpegError(f"ffprobe did not answer within {PROBE_TIMEOUT_SEC:.0f} s") from e
     if res.returncode != 0:
         raise FfmpegError(f"ffprobe failed: {res.stderr[-800:]}")
     data = json.loads(res.stdout)
@@ -161,21 +237,29 @@ def _frame_values(args: list[str], key: str, on_time: Optional[Callable[[float],
     out: list[tuple[float, float]] = []
     with tempfile.TemporaryFile() as err:  # a damaged file can print megabytes of warnings: never a pipe
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True, errors="replace")
+        watch = _StallWatch(proc)
         assert proc.stdout is not None
         t: Optional[float] = None
         prefix = key + "="
-        for line in proc.stdout:
-            if line.startswith("frame:"):
-                m = re.search(r"pts_time:(-?[0-9.]+)", line)
-                t = float(m.group(1)) if m else None
-                if t is not None and on_time:
-                    on_time(t)
-            elif t is not None and line.startswith(prefix):
-                try:
-                    out.append((t, float(line[len(prefix):])))
-                except ValueError:
-                    pass
-        code = proc.wait()
+        try:
+            for line in proc.stdout:
+                watch.touch()
+                if line.startswith("frame:"):
+                    m = re.search(r"pts_time:(-?[0-9.]+)", line)
+                    t = float(m.group(1)) if m else None
+                    if t is not None and on_time:
+                        on_time(t)  # may raise JobCancelled: the finally below stops ffmpeg
+                elif t is not None and line.startswith(prefix):
+                    try:
+                        out.append((t, float(line[len(prefix):])))
+                    except ValueError:
+                        pass
+            code = proc.wait()
+        finally:
+            watch.stop()
+            kill_process(proc)
+        if watch.fired:
+            raise watch.error()
         if code != 0:
             err.seek(0)
             raise FfmpegError(f"ffmpeg exited {code}: {err.read().decode(errors='replace')[-1500:]}")
@@ -278,7 +362,10 @@ def decode_mono_16k(path: Path | str) -> np.ndarray:
     changes its API (PyAV 19 removed `metadata_errors`: "open() got an unexpected keyword argument")."""
     cmd = [binaries()[0], "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
            "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=DECODE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired as e:  # subprocess.run kills the child on timeout
+        raise FfmpegError(f"ffmpeg did not finish decoding the audio within {DECODE_TIMEOUT_SEC:.0f} s") from e
     if proc.returncode != 0:
         raise FfmpegError(f"ffmpeg could not decode the audio: {proc.stderr.decode(errors='replace')[-800:]}")
     return np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0

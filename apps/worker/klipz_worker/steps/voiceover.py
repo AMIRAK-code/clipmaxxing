@@ -66,8 +66,11 @@ def audio_duration(path: Any) -> float:
     import json
     import subprocess
 
-    res = subprocess.run([ffmpeg.binaries()[1], "-v", "error", "-print_format", "json", "-show_format", str(path)],
-                         capture_output=True, text=True, errors="replace")
+    try:
+        res = subprocess.run([ffmpeg.binaries()[1], "-v", "error", "-print_format", "json", "-show_format", str(path)],
+                             capture_output=True, text=True, errors="replace", timeout=ffmpeg.PROBE_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired as e:
+        raise ffmpeg.FfmpegError("ffprobe did not answer in time") from e
     if res.returncode != 0:
         raise ffmpeg.FfmpegError(res.stderr[-300:])
     return float(json.loads(res.stdout)["format"]["duration"])
