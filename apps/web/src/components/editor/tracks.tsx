@@ -3,6 +3,7 @@
 import { captionWordsOnTimeline, pieceDuration, pieceOffsets, totalDuration, type TimedCaptionWord } from "@klipz/shared";
 import { memo, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { pieceTrimBounds } from "@/lib/editor/montage";
 import * as ops from "@/lib/editor/ops";
 import { sliceByStart } from "@/lib/editor/timeline-math";
 import { startDrag } from "./drag";
@@ -33,7 +34,9 @@ export function VideoRow() {
           if (!cur) return;
           const orig = edge === "start" ? cur.srcStart : cur.srcEnd;
           ctx.store.getState().select({ kind: "piece", id: p.id });
-          startDrag(e, (dx) => ctx.store.getState().trimPiece(p.id, edge, orig + dx / pps, bounds));
+          // a montage piece stays inside its scene (with its extra footage): never into another upload's
+          const b = pieceTrimBounds(ctx.montage?.scenes, cur, bounds);
+          startDrag(e, (dx) => ctx.store.getState().trimPiece(p.id, edge, orig + dx / pps, b));
         };
         return (
           <div

@@ -1,7 +1,7 @@
 "use client";
 
 import type { PlayerRef } from "@remotion/player";
-import { OUT_FPS, totalDuration, type CropTrack, type EditState } from "@klipz/shared";
+import { OUT_FPS, totalDuration, type CropTrack, type EditState, type MontageScene } from "@klipz/shared";
 import { createContext, useContext } from "react";
 import { createStore, useStore, type StoreApi } from "zustand";
 import type { Autosaver, SaveInfo } from "@/lib/editor/autosave";
@@ -47,6 +47,8 @@ export interface EditorCtx {
   save: StoreApi<SaveState>;
   clip: ClipMeta;
   source: SourceMeta;
+  /** the pool's scenes when this clip is a montage (null for an ordinary clip) */
+  montage: { scenes: MontageScene[] } | null;
   cropTrack: CropTrack | null;
   /** current playhead in output seconds */
   getTime(): number;
@@ -59,7 +61,7 @@ export interface EditorCtx {
   showHelp(): void;
 }
 
-export type InspectorTab = "captions" | "video" | "media" | "text" | "overlays" | "export";
+export type InspectorTab = "scenes" | "captions" | "video" | "media" | "text" | "overlays" | "export";
 
 const Ctx = createContext<EditorCtx | null>(null);
 export const EditorProvider = Ctx.Provider;

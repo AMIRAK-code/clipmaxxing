@@ -11,12 +11,13 @@ export default async function ClipPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const detail = clipDetail(id);
   if (!detail) notFound();
-  const { clip, source, words } = detail;
+  const { clip, source, words, montage } = detail;
   return (
     <ClipEditorLoader
       clip={clip}
       source={source}
       words={words}
+      montage={montage}
       initialRenders={renderViews(id)}
       initialJobs={jobsForProject(clip.project_id, 30)}
     />

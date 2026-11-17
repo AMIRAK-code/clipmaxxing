@@ -17,8 +17,9 @@ export interface Transcript {
   model: string | null;
 }
 
+/** Clip projects (one video each); montage projects are listed by server/montage.ts. */
 export function listProjects(): ProjectSummary[] {
-  const projects = all<Project>("select * from projects order by created_at desc");
+  const projects = all<Project>("select * from projects where kind = 'clips' order by created_at desc");
   return projects.map((p) => {
     const source = row<SourceVideo>("source_videos", "select * from source_videos where project_id = ? order by created_at limit 1", p.id) ?? null;
     const agg = get<{ n: number; top: number | null }>(

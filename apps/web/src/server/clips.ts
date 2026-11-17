@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { z } from "zod";
-import type { Clip, SourceVideo, Word } from "@klipz/shared";
-import { run, tx, nowIso } from "./db";
+import type { Clip, MontageScene, SourceVideo, Word } from "@klipz/shared";
+import { get, rows, run, tx, nowIso } from "./db";
 import { HttpError } from "./http";
 import { enqueueJob } from "./jobs";
 import { storagePath } from "./paths";
@@ -114,13 +114,18 @@ export function wordsInRange(words: Word[], from: number, to: number): Word[] {
   return words.filter((w) => w.e > from && w.s < to);
 }
 
-export function clipDetail(clipId: string): { clip: Clip; source: SourceVideo | null; words: Word[] } | undefined {
+export function clipDetail(
+  clipId: string,
+): { clip: Clip; source: SourceVideo | null; words: Word[]; montage: { scenes: MontageScene[] } | null } | undefined {
   const clip = getClip(clipId);
   if (!clip) return undefined;
   const source = getSource(clip.source_video_id) ?? null;
   const t = getTranscript(clip.source_video_id);
+  // a montage clip spans its whole pool (start 0 .. pool length): these are all the pool's words
   const words = t ? wordsInRange(t.words ?? [], clip.start_sec - WORD_PAD_SEC, clip.end_sec + WORD_PAD_SEC) : [];
-  return { clip, source, words };
+  const kind = get<{ kind: string }>("select kind from projects where id = ?", clip.project_id)?.kind;
+  const montage = kind === "montage" ? { scenes: rows<MontageScene>("montage_scenes", "select * from montage_scenes where project_id = ? order by idx", clip.project_id) } : null;
+  return { clip, source, words, montage };
 }
 
 /** Delete the clip row (renders/posts cascade) and its stored files. */

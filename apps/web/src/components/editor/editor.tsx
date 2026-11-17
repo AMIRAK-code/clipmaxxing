@@ -1,6 +1,6 @@
 "use client";
 
-import { OUT_FPS, createDefaultEditState, type Clip, type CropTrack, type Job, type SourceVideo, type Word } from "@klipz/shared";
+import { OUT_FPS, createDefaultEditState, type Clip, type CropTrack, type Job, type MontageScene, type SourceVideo, type Word } from "@klipz/shared";
 import { normalizeEdit } from "@klipz/video";
 import type { PlayerRef } from "@remotion/player";
 import Link from "next/link";
@@ -31,6 +31,8 @@ export interface ClipEditorProps {
   clip: Clip;
   source: SourceVideo | null;
   words: Word[];
+  /** the pool's scenes when the clip is a montage */
+  montage?: { scenes: MontageScene[] } | null;
   initialRenders: RenderView[];
   initialJobs: Job[];
 }
@@ -53,7 +55,7 @@ export function ClipEditor(props: ClipEditorProps) {
   return <Loaded {...props} source={source} />;
 }
 
-function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditorProps & { source: SourceVideo }) {
+function Loaded({ clip, source, words, montage = null, initialRenders, initialJobs }: ClipEditorProps & { source: SourceVideo }) {
   const [state] = useState(() => {
     const hadEdit = clip.edit_state != null;
     const initial = hadEdit
@@ -80,7 +82,8 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
   const { store, playhead, view, save } = state;
   const playerRef = useRef<PlayerRef | null>(null);
   const autosaver = useRef<Autosaver | null>(null);
-  const [tab, setTab] = useState<InspectorTab>("captions");
+  // a montage opens on its scenes; an ordinary clip on its captions
+  const [tab, setTab] = useState<InspectorTab>(montage ? "scenes" : "captions");
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -161,6 +164,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
       clip: { id: clip.id, projectId: clip.project_id, title: clip.title, startSec: clip.start_sec, endSec: clip.end_sec },
       source: { url: fileUrl(source.storage_key) ?? "", width: source.width ?? 1920, height: source.height ?? 1080, duration: source.duration_sec },
       cropTrack,
+      montage,
       getTime: () => (playerRef.current?.getCurrentFrame() ?? playhead.current) / OUT_FPS,
       seekSec: (t) => seekFrame(Math.round(t * OUT_FPS)),
       seekFrame,
@@ -169,7 +173,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
       openTab: setTab,
       showHelp: () => setHelp(true),
     }),
-    [store, playhead, view, save, clip.id, clip.project_id, clip.title, clip.start_sec, clip.end_sec, cropTrack, source.storage_key, source.width, source.height, source.duration_sec, seekFrame],
+    [store, playhead, view, save, clip.id, clip.project_id, clip.title, clip.start_sec, clip.end_sec, cropTrack, source.storage_key, source.width, source.height, source.duration_sec, seekFrame, montage],
   );
 
   useEditorShortcuts(ctx);

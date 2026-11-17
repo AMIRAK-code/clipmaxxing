@@ -151,7 +151,7 @@ function rows(): { raws: RawRow[]; clips: ClipRow[] } {
   const raws = all<RawRow>(
     `select s.id, s.storage_key, s.filename, s.size_bytes, s.duration_sec, s.origin, s.created_at, p.title as project_title
        from source_videos s left join projects p on p.id = s.project_id
-      where s.storage_key is not null and s.status != 'deleted' order by s.created_at desc`,
+      where s.storage_key is not null and s.status != 'deleted' and s.role != 'pool' order by s.created_at desc`,
   );
   // the newest finished render of each clip
   const clips = all<ClipRow>(

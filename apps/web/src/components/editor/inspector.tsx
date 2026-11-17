@@ -1,18 +1,20 @@
 "use client";
 
 import type { Job, Word } from "@klipz/shared";
-import { Captions, Clapperboard, Download, Film, Layers, Type } from "lucide-react";
+import { Captions, Clapperboard, Download, Film, LayoutList, Layers, Type } from "lucide-react";
 import { useRef, type KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
 import type { RenderView } from "@/server/renders";
 import { CaptionsPanel } from "./captions-panel";
-import type { InspectorTab } from "./editor-context";
+import { useEditorCtx, type InspectorTab } from "./editor-context";
 import { ExportPanel } from "./export-panel";
 import { MediaPanel } from "./media-panel";
 import { OverlaysPanel } from "./overlays-panel";
+import { ScenesPanel } from "./scenes-panel";
 import { TextPanel } from "./text-panel";
 import { VideoPanel } from "./video-panel";
 
+const SCENES_TAB = { id: "scenes" as InspectorTab, label: "Scenes", icon: LayoutList };
 const TABS: Array<{ id: InspectorTab; label: string; icon: typeof Captions }> = [
   { id: "captions", label: "Captions", icon: Captions },
   { id: "video", label: "Video", icon: Clapperboard },
@@ -25,6 +27,7 @@ const TABS: Array<{ id: InspectorTab; label: string; icon: typeof Captions }> = 
 export function Inspector({
   tab,
   setTab,
+  words,
   initialRenders,
   initialJobs,
 }: {
@@ -35,19 +38,21 @@ export function Inspector({
   initialJobs: Job[];
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  // montage clips get a Scenes tab (order, add, delete, mute)
+  const tabs = useEditorCtx().montage ? [SCENES_TAB, ...TABS] : TABS;
   const onKey = (e: KeyboardEvent) => {
-    const i = TABS.findIndex((t) => t.id === tab);
+    const i = tabs.findIndex((t) => t.id === tab);
     const next = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : null;
     if (next === null) return;
     e.preventDefault();
-    const t = TABS[(next + TABS.length) % TABS.length]!;
+    const t = tabs[(next + tabs.length) % tabs.length]!;
     setTab(t.id);
     listRef.current?.querySelector<HTMLElement>(`[data-tab="${t.id}"]`)?.focus();
   };
   return (
     <aside className="flex w-[360px] shrink-0 flex-col border-l border-line bg-panel" aria-label="Inspector">
       <div ref={listRef} role="tablist" aria-label="Inspector sections" onKeyDown={onKey} className="flex shrink-0 border-b border-line">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -69,6 +74,7 @@ export function Inspector({
         ))}
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="min-h-0 flex-1 overflow-y-auto">
+        {tab === "scenes" ? <ScenesPanel words={words} /> : null}
         {tab === "captions" ? <CaptionsPanel /> : null}
         {tab === "video" ? <VideoPanel /> : null}
         {tab === "media" ? <MediaPanel /> : null}

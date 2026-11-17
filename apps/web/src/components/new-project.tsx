@@ -5,35 +5,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, Input, Progress, Select } from "@/components/ui/primitives";
+import { MAX_UPLOAD_BYTES as MAX_BYTES, VIDEO_ACCEPT, uploadFile } from "@/lib/upload";
 import { api, cn, formatBytes } from "@/lib/utils";
-
-const MAX_BYTES = 5 * 1024 ** 3;
-
-/** Upload a file in ordered chunks; retries a failed chunk from the offset the server reports. */
-async function uploadFile(file: File, onProgress: (fraction: number) => void): Promise<string> {
-  const start = await api<{ projectId: string; sourceId: string; chunkSize: number }>("/api/uploads", {
-    method: "POST",
-    json: { filename: file.name, size: file.size },
-  });
-  let offset = 0;
-  let failures = 0;
-  while (offset < file.size) {
-    const chunk = file.slice(offset, offset + start.chunkSize);
-    try {
-      const res = await api<{ received: number }>(`/api/uploads/${start.sourceId}?offset=${offset}`, { method: "PUT", body: chunk });
-      offset = res.received;
-      failures = 0;
-      onProgress(offset / file.size);
-    } catch (e) {
-      if (++failures > 4) throw e;
-      await new Promise((r) => setTimeout(r, 500 * 2 ** failures));
-      const state = await api<{ received: number }>(`/api/uploads/${start.sourceId}`);
-      offset = state.received;
-    }
-  }
-  await api(`/api/uploads/${start.sourceId}`, { method: "POST" });
-  return start.projectId;
-}
 
 export function NewProject() {
   const router = useRouter();
@@ -52,7 +25,7 @@ export function NewProject() {
       if (file.size > MAX_BYTES) return setError("That file is larger than 5 GB.");
       setUpload({ name: file.name, size: file.size, progress: 0 });
       try {
-        const projectId = await uploadFile(file, (progress) => setUpload({ name: file.name, size: file.size, progress }));
+        const { projectId } = await uploadFile(file, (progress) => setUpload({ name: file.name, size: file.size, progress }));
         router.push(`/projects/${projectId}`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Upload failed");
@@ -105,7 +78,7 @@ export function NewProject() {
             type="file"
             aria-label="Choose a video file to upload"
             tabIndex={-1}
-            accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.m4v,.avi"
+            accept={VIDEO_ACCEPT}
             className="hidden"
             onChange={(e) => void startUpload(e.target.files?.[0])}
           />

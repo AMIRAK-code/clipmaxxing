@@ -12,6 +12,7 @@ import {
   splitAt,
   totalDuration,
   trimPiece,
+  uid,
   type AudioItem,
   type BrollItem,
   type CaptionStyle,
@@ -64,6 +65,38 @@ export const rippleDeletePiece = (id: string): Recipe => (d) => {
   for (const z of d.zooms) z.t = shift(z.t);
   for (const it of [...d.broll, ...d.audio, ...d.texts]) it.start = shift(it.start);
   d.zooms = d.zooms.filter((z) => z.t <= total);
+};
+
+/**
+ * Insert a piece of footage (a montage scene) after piece `afterId`, or at the end when null. Everything
+ * on the output timeline after the insert point moves right with it; `words` are the caption words of
+ * the footage, added so captions work there too.
+ */
+export const insertPiece = (
+  piece: { srcStart: number; srcEnd: number },
+  afterId: string | null,
+  words: EditState["captions"]["words"] = [],
+): Recipe => (d) => {
+  const len = piece.srcEnd - piece.srcStart;
+  if (!(len >= MIN_PIECE_SEC)) return;
+  const idx = afterId === null ? d.video.length - 1 : d.video.findIndex((p) => p.id === afterId);
+  const at = idx < 0 ? d.video.length : idx + 1;
+  const t = at >= d.video.length ? totalDuration(d.video) : pieceOffsets(d.video)[at]!;
+  d.video.splice(at, 0, { id: uid("v"), srcStart: piece.srcStart, srcEnd: piece.srcEnd });
+  for (const z of d.zooms) if (z.t >= t) z.t += len;
+  for (const it of [...d.broll, ...d.audio, ...d.texts]) if (it.start >= t) it.start += len;
+  const have = new Set(d.captions.words.map((w) => w.id));
+  for (const w of words) if (!have.has(w.id)) d.captions.words.push({ ...w });
+  d.captions.words.sort((a, b) => a.s - b.s);
+};
+
+/** Move a piece one place earlier (-1) or later (+1) on the timeline. */
+export const movePiece = (id: string, delta: -1 | 1): Recipe => (d) => {
+  const i = d.video.findIndex((p) => p.id === id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= d.video.length) return;
+  const [p] = d.video.splice(i, 1);
+  d.video.splice(j, 0, p!);
 };
 
 /** Trim one edge, never past a neighbouring piece in source order (that would duplicate footage). */

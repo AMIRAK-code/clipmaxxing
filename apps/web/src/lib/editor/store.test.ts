@@ -2,6 +2,7 @@ import { captionWordsOnTimeline, DEFAULT_HOOK_STYLE, FONT_FILES, HOOK_STYLE_PRES
 import { describe, expect, it } from "vitest";
 import { sampleEdit } from "./fixtures";
 import * as ops from "./ops";
+import { pieceTrimBounds } from "./montage";
 import { createEditorStore } from "./store";
 
 function setup() {
@@ -342,5 +343,48 @@ describe("editor store: history", () => {
     get().rippleDeletePiece(get().edit.video[0]!.id);
     expect(srcToOut(get().edit.video, 22)).toBeNull();
     expect(srcToOut(get().edit.video, 26)).toBeCloseTo(1);
+  });
+});
+
+describe("editor store: montage scenes", () => {
+  it("inserts a scene after the selected piece, shifts later items and adds its words; undo removes it", () => {
+    const { get } = setup();
+    get().splitAt(4);
+    const [first] = get().edit.video;
+    const before = totalDuration(get().edit.video);
+    const words = [{ id: "w99_50000", w: "added", s: 50, e: 50.4 }];
+    get().apply(ops.insertPiece({ srcStart: 50, srcEnd: 53 }, first!.id, words));
+    const v = get().edit.video;
+    expect(v).toHaveLength(3);
+    expect(v[1]).toMatchObject({ srcStart: 50, srcEnd: 53 });
+    expect(totalDuration(v)).toBeCloseTo(before + 3);
+    expect(get().edit.captions.words.some((w) => w.id === "w99_50000")).toBe(true);
+    expect(captionWordsOnTimeline(v, get().edit.captions.words).some((w) => w.w === "added")).toBe(true);
+    get().apply(ops.insertPiece({ srcStart: 60, srcEnd: 61 }, null));
+    expect(get().edit.video.at(-1)).toMatchObject({ srcStart: 60, srcEnd: 61 });
+    get().undo();
+    get().undo();
+    expect(get().edit.video).toHaveLength(2);
+    expect(get().edit.captions.words.some((w) => w.id === "w99_50000")).toBe(false);
+  });
+
+  it("moves a piece earlier or later and ignores moves past the ends", () => {
+    const { get } = setup();
+    get().splitAt(3);
+    get().splitAt(6);
+    const ids = get().edit.video.map((p) => p.id);
+    get().apply(ops.movePiece(ids[2]!, -1));
+    expect(get().edit.video.map((p) => p.id)).toEqual([ids[0], ids[2], ids[1]]);
+    get().apply(ops.movePiece(ids[0]!, -1));
+    expect(get().edit.video.map((p) => p.id)).toEqual([ids[0], ids[2], ids[1]]);
+  });
+
+  it("keeps a montage piece's trim inside its scene", () => {
+    const scenes = [
+      { id: "s1", pool_min: 0, pool_max: 5, pool_start: 1, pool_end: 4 },
+      { id: "s2", pool_min: 5, pool_max: 10, pool_start: 6, pool_end: 9 },
+    ] as unknown as Parameters<typeof pieceTrimBounds>[0];
+    expect(pieceTrimBounds(scenes, { srcStart: 6 }, { min: 0, max: 99 })).toEqual({ min: 5, max: 10 });
+    expect(pieceTrimBounds(null, { srcStart: 6 }, { min: 0, max: 99 })).toEqual({ min: 0, max: 99 });
   });
 });
