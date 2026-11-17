@@ -5,6 +5,7 @@ import { memo, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import * as ops from "@/lib/editor/ops";
 import { sliceByStart } from "@/lib/editor/timeline-math";
+import { sceneTrimBounds } from "@/lib/montage";
 import { startDrag } from "./drag";
 import { useEdit, useEditor, useEditorCtx, useView } from "./editor-context";
 
@@ -33,7 +34,9 @@ export function VideoRow() {
           if (!cur) return;
           const orig = edge === "start" ? cur.srcStart : cur.srcEnd;
           ctx.store.getState().select({ kind: "piece", id: p.id });
-          startDrag(e, (dx) => ctx.store.getState().trimPiece(p.id, edge, orig + dx / pps, bounds));
+          // a montage piece stays inside its own scene: never into the next scene (another video)
+          const b = sceneTrimBounds(ctx.source.scenes, cur, bounds);
+          startDrag(e, (dx) => ctx.store.getState().trimPiece(p.id, edge, orig + dx / pps, b));
         };
         return (
           <div

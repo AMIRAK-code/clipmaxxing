@@ -26,6 +26,17 @@ export function sceneOfPiece(scenes: readonly MontageScene[], piece: Pick<VideoP
   return scenes.find((s) => s.s <= t && t < s.e);
 }
 
+/** Trim limits of a montage piece: its own scene of the pool, so dragging an edge never brings in the next
+ * scene (another video's footage). Pieces outside any scene, and clips of ordinary videos, use `fallback`. */
+export function sceneTrimBounds(
+  scenes: readonly MontageScene[] | null | undefined,
+  piece: Pick<VideoPiece, "srcStart">,
+  fallback: { min: number; max: number },
+): { min: number; max: number } {
+  const sc = scenes?.length ? sceneOfPiece(scenes, piece) : undefined;
+  return sc ? { min: Math.max(fallback.min, sc.s), max: Math.min(fallback.max, sc.e) } : fallback;
+}
+
 let seq = 0;
 const pieceId = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
 

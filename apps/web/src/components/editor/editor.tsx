@@ -161,7 +161,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
       view,
       save,
       clip: { id: clip.id, projectId: clip.project_id, title: clip.title, startSec: clip.start_sec, endSec: clip.end_sec },
-      source: { url: fileUrl(source.storage_key) ?? "", width: source.width ?? 1920, height: source.height ?? 1080, duration: source.duration_sec },
+      source: { url: fileUrl(source.storage_key) ?? "", width: source.width ?? 1920, height: source.height ?? 1080, duration: source.duration_sec, scenes: source.role === "pool" ? (source.scenes ?? []) : null },
       cropTrack,
       getTime: () => (playerRef.current?.getCurrentFrame() ?? playhead.current) / OUT_FPS,
       seekSec: (t) => seekFrame(Math.round(t * OUT_FPS)),
@@ -171,7 +171,7 @@ function Loaded({ clip, source, words, initialRenders, initialJobs }: ClipEditor
       openTab: setTab,
       showHelp: () => setHelp(true),
     }),
-    [store, playhead, view, save, clip.id, clip.project_id, clip.title, clip.start_sec, clip.end_sec, cropTrack, source.storage_key, source.width, source.height, source.duration_sec, seekFrame],
+    [store, playhead, view, save, clip.id, clip.project_id, clip.title, clip.start_sec, clip.end_sec, cropTrack, source.storage_key, source.width, source.height, source.duration_sec, source.role, source.scenes, seekFrame],
   );
 
   useEditorShortcuts(ctx);

@@ -1,7 +1,7 @@
 "use client";
 
 import type { PlayerRef } from "@remotion/player";
-import { OUT_FPS, totalDuration, type CropTrack, type EditState } from "@klipz/shared";
+import { OUT_FPS, totalDuration, type CropTrack, type EditState, type MontageScene } from "@klipz/shared";
 import { createContext, useContext } from "react";
 import { createStore, useStore, type StoreApi } from "zustand";
 import type { Autosaver, SaveInfo } from "@/lib/editor/autosave";
@@ -22,6 +22,8 @@ export interface SourceMeta {
   width: number;
   height: number;
   duration: number | null;
+  /** a montage's scene pool: its scenes (pieces are trimmed within their own scene); null otherwise */
+  scenes: MontageScene[] | null;
 }
 
 export interface TimelineView {
