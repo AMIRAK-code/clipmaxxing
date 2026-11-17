@@ -119,13 +119,10 @@ class FasterWhisperTranscriber:
                 "model": f"faster-whisper:{self.model_name}"}
 
     def transcribe(self, audio_path: Path, duration: float, on_progress: ProgressFn) -> dict[str, Any]:
-        attempts: list[tuple[str, str]]
-        if self.device == "cpu":
-            attempts = [("cpu", "int8")]
-        elif self.device == "cuda":
-            attempts = [("cuda", "float16"), ("cpu", "int8")]
-        else:
-            attempts = [("cuda", "float16"), ("cpu", "int8")]
+        global _CUDA_FAILED
+        attempts: list[tuple[str, str]] = [("cpu", "int8")]
+        if self.device != "cpu" and cuda_usable():
+            attempts.insert(0, ("cuda", "float16"))
         # Decode once with our own ffmpeg and hand Whisper the samples (no PyAV involved, see decode_mono_16k).
         from .. import ffmpeg
 
@@ -144,8 +141,30 @@ class FasterWhisperTranscriber:
                 raise  # the user cancelled: do not start over on the CPU
             except Exception as e:  # noqa: BLE001 - any load/inference error falls through to CPU
                 log.warning("faster-whisper on %s/%s failed (%s); trying next option", device, ctype, e)
+                if device == "cuda":
+                    _CUDA_FAILED = True  # never again in this process: a second try can hang (see cuda_usable)
                 last = e
         raise RuntimeError(f"transcription failed: {last}")
+
+
+# CUDA failed once in this process (e.g. cublas64_12.dll missing on a PC without an NVIDIA toolkit).
+_CUDA_FAILED = False
+
+
+def cuda_usable() -> bool:
+    """True when CTranslate2 sees a CUDA device and CUDA has not failed in this process yet.
+
+    After one failed CUDA transcription (missing cuBLAS), a second CUDA attempt in the same process hangs
+    forever inside CTranslate2's encode() instead of raising: the worker would sit at "Transcribing" with
+    no CPU use. So CUDA is only tried when a device is there, and never again after it failed once."""
+    if _CUDA_FAILED:
+        return False
+    try:
+        import ctranslate2
+
+        return int(ctranslate2.get_cuda_device_count()) > 0
+    except Exception:  # noqa: BLE001 - no CUDA build / no driver
+        return False
 
 
 class WhisperXTranscriber:
