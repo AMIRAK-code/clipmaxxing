@@ -131,6 +131,28 @@ their words correctly (it used to lay Persian words out left to right, in a syst
 - `convert-fonts.py` now writes the same bytes on every run; its first re-run rewrites the seven Latin TTFs
   once (timestamp only), which is why they were left untouched in this change.
 
+### New after v0.2.2: hook card text styles (not released yet)
+- Editor → Overlays → "Hook text style": six presets (`HOOK_PRESETS` in `packages/shared/src/presets.ts`:
+  Purple Card = the old card, Yellow Box, Clean White, Midnight, Red Alert, Outline), then font (the seven
+  bundled caption fonts, each in its one weight via `fontWeightOf()`), size 40-180, text colour, box on/off +
+  colour, outline width + colour, uppercase, Reset. Tiles: `hook-mini.tsx`.
+- Saved like caption styles: `edit.hook.styleId` + `edit.hook.overrides` (ops `setHookStyle`,
+  `setHookOverride`, `resetHookOverrides`). Neither field is written for new clips; `resolveHookStyle()`
+  falls back to Purple Card, so old edits draw exactly as before (Latin + Persian edits: ASS scripts
+  byte-identical to 0.2.2 for every caption preset x safe zone x hook).
+- Studio: `hookCardLayout()` in `Overlays.tsx` (pure, unit-tested). Padding 28/40, corners 32 and the shadow
+  scale with `fontSize / HOOK_BASE_SIZE` (92); no box = no shadow; outline = `-webkit-text-stroke` with
+  `paint-order: stroke fill` like captions.
+- Fast: `ass._hook_look()` / `add_hook()` port the same rules (outline = ASS `\bord` of half the CSS width).
+  The worker reads the presets from `presets.json` (`hookPresets`, `hookBaseSize`; regenerate with
+  `KLIPZ_WRITE_PRESETS=1 npx vitest run packages/shared`). Refused with a reason, so Studio renders it:
+  colours that are not plain (gradients, `var()`, `hsl()`), fonts that are not bundled, sizes outside
+  8-400 px / outlines over 60 px.
+- Verified: every preset + a custom override + a Persian hook rendered by both renderers on a flat test
+  clip, settled frame (30): card and text edges within 0-2 px of Studio. Editor preview checked in an
+  isolated data folder (choices show at once and survive a reload). Tests: `packages/shared/src/hook-style.test.ts`,
+  `packages/video/src/hook-card.test.ts`, store test, `apps/worker/tests/test_hook_style.py`.
+
 ## How it was verified (v0.2.1)
 
 - `npx vitest run`: 501 passed. Worker `pytest`: 218 passed, 2 skipped (the slow real-Whisper tests were not run this time).

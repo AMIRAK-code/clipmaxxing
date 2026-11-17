@@ -20,6 +20,15 @@ _PRESETS = json.loads((Path(__file__).with_name("presets.json")).read_text(encod
 CAPTION_PRESETS: list[dict[str, Any]] = _PRESETS["captionPresets"]
 SAFE_ZONES: dict[str, dict[str, float]] = _PRESETS["safeZones"]
 FONT_FILES: dict[str, list[dict[str, Any]]] = _PRESETS["fontFiles"]
+HOOK_PRESETS: list[dict[str, Any]] = _PRESETS["hookPresets"]
+HOOK_BASE_SIZE: float = float(_PRESETS["hookBaseSize"])
+
+
+def resolve_hook_style(hook: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """resolveHookStyle(): the hook card's preset (the original purple card when none is set) + overrides."""
+    hook = hook or {}
+    found = next((s for s in HOOK_PRESETS if s["id"] == hook.get("styleId")), None) or HOOK_PRESETS[0]
+    return {**found, **(hook.get("overrides") or {})}
 
 
 def js_round(x: float) -> int:

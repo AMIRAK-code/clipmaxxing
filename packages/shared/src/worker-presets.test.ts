@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CAPTION_PRESETS, DEFAULT_CAPTION_STYLE_ID, FALLBACK_FONT, FONT_FILES, SAFE_ZONES } from "./presets";
+import { CAPTION_PRESETS, DEFAULT_CAPTION_STYLE_ID, FALLBACK_FONT, FONT_FILES, HOOK_BASE_SIZE, HOOK_PRESETS, SAFE_ZONES } from "./presets";
 
 // The Python fast renderer (apps/worker/klipz_worker/fastrender) draws captions with the same styles.
 // It reads this generated copy; regenerate with:  KLIPZ_WRITE_PRESETS=1 npx vitest run packages/shared
@@ -12,6 +12,8 @@ const expected = {
   fontFiles: FONT_FILES,
   fallbackFont: FALLBACK_FONT,
   defaultStyleId: DEFAULT_CAPTION_STYLE_ID,
+  hookPresets: HOOK_PRESETS,
+  hookBaseSize: HOOK_BASE_SIZE,
 };
 
 describe("worker presets.json", () => {

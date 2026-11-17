@@ -1,4 +1,4 @@
-import { captionWordsOnTimeline, srcToOut, totalDuration } from "@klipz/shared";
+import { captionWordsOnTimeline, resolveHookStyle, srcToOut, totalDuration } from "@klipz/shared";
 import { describe, expect, it } from "vitest";
 import { sampleEdit } from "./fixtures";
 import * as ops from "./ops";
@@ -167,6 +167,27 @@ describe("editor store: zoom keyframes, look, overlays", () => {
     for (let i = 0; i < 5; i++) get().undo();
     expect(get().edit.look).toBe("none");
     expect(get().edit.hook.enabled).toBe(false);
+  });
+
+  it("styles the hook card: preset, clamped overrides, reset, undo", () => {
+    const { get } = setup();
+    expect(get().edit.hook.styleId).toBeUndefined();
+    expect(resolveHookStyle(get().edit.hook).id).toBe("purple-card");
+    get().apply(ops.setHookOverride("color", "#00ff00"));
+    get().apply(ops.setHookStyle("yellow-box"));
+    expect(get().edit.hook).toMatchObject({ styleId: "yellow-box", overrides: {} }); // a preset drops earlier tweaks
+    get().apply(ops.setHookOverride("fontSize", 999));
+    get().apply(ops.setHookOverride("strokeWidth", -3));
+    get().apply(ops.setHookOverride("fontFamily", "Anton"));
+    get().apply(ops.setHookOverride("background", "transparent"));
+    expect(get().edit.hook.overrides).toEqual({ fontSize: 180, strokeWidth: 0, fontFamily: "Anton", background: "transparent" });
+    expect(resolveHookStyle(get().edit.hook)).toMatchObject({ id: "yellow-box", color: "#111111", fontFamily: "Anton", fontSize: 180 });
+    get().apply(ops.setHookOverride("fontFamily", undefined));
+    expect(get().edit.hook.overrides).not.toHaveProperty("fontFamily");
+    get().apply(ops.resetHookOverrides());
+    expect(get().edit.hook.overrides).toEqual({});
+    get().undo();
+    expect(get().edit.hook.overrides).toHaveProperty("fontSize", 180);
   });
 });
 

@@ -296,5 +296,74 @@
     "file": "vazirmatn-900.woff2",
     "weight": 900
   },
-  "defaultStyleId": "bold-outline"
+  "defaultStyleId": "bold-outline",
+  "hookPresets": [
+    {
+      "id": "purple-card",
+      "name": "Purple Card",
+      "fontFamily": "Montserrat",
+      "fontSize": 92,
+      "uppercase": true,
+      "color": "#FFFFFF",
+      "background": "rgba(124,58,237,0.92)",
+      "strokeColor": "#000000",
+      "strokeWidth": 0
+    },
+    {
+      "id": "yellow-box",
+      "name": "Yellow Box",
+      "fontFamily": "Archivo Black",
+      "fontSize": 84,
+      "uppercase": true,
+      "color": "#111111",
+      "background": "#FFD60A",
+      "strokeColor": "#000000",
+      "strokeWidth": 0
+    },
+    {
+      "id": "clean-white",
+      "name": "Clean White",
+      "fontFamily": "Inter",
+      "fontSize": 80,
+      "uppercase": false,
+      "color": "#111111",
+      "background": "#FFFFFF",
+      "strokeColor": "#000000",
+      "strokeWidth": 0
+    },
+    {
+      "id": "midnight",
+      "name": "Midnight",
+      "fontFamily": "Poppins",
+      "fontSize": 84,
+      "uppercase": false,
+      "color": "#FFFFFF",
+      "background": "#0F172A",
+      "strokeColor": "#000000",
+      "strokeWidth": 0
+    },
+    {
+      "id": "red-alert",
+      "name": "Red Alert",
+      "fontFamily": "Bebas Neue",
+      "fontSize": 120,
+      "uppercase": true,
+      "color": "#FFFFFF",
+      "background": "#E11D48",
+      "strokeColor": "#000000",
+      "strokeWidth": 0
+    },
+    {
+      "id": "outline",
+      "name": "Outline",
+      "fontFamily": "Anton",
+      "fontSize": 116,
+      "uppercase": true,
+      "color": "#FFFFFF",
+      "background": "transparent",
+      "strokeColor": "#000000",
+      "strokeWidth": 12
+    }
+  ],
+  "hookBaseSize": 92
 }

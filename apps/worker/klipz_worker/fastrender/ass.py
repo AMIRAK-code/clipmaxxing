@@ -366,17 +366,14 @@ def add_captions(script: Script, edit: dict[str, Any], custom_styles: Sequence[d
 
 
 # ── hook card ─────────────────────────────────────────────────────────────
-HOOK_FONT_SIZE = 92.0
-HOOK_BG = Color(124, 58, 237, 0.92)
 HOOK_DIM = Color(0, 0, 0, 0.38)
 HOOK_SHADOW = Color(0, 0, 0, 0.5)
-WHITE = Color(255, 255, 255)
 
 
-def hook_lines(text: str) -> list[str]:
+def hook_lines(text: str, uppercase: bool = True) -> list[str]:
     lines: list[str] = []
     cur = ""
-    for word in text.strip().upper().split():
+    for word in (text.strip().upper() if uppercase else text.strip()).split():
         if cur and len(cur) + 1 + len(word) > 14:
             lines.append(cur)
             cur = word
@@ -408,7 +405,37 @@ def hook_dim(edit: dict[str, Any], total_frames: int) -> list[tuple[int, float]]
     return out
 
 
-HOOK_FONT = "Montserrat"
+@dataclass(frozen=True)
+class _HookLook:
+    """The hook card's resolved style (model.resolve_hook_style), checked and converted for drawing."""
+    family: str
+    size: float
+    uppercase: bool
+    color: Color
+    background: Optional[Color]      # None = no card (text alone, no shadow)
+    stroke: float                    # CSS outline width in px
+    stroke_color: Color
+
+
+def _hook_look(edit: dict[str, Any]) -> _HookLook:
+    """Raises Unsupported for a style the fast renderer cannot draw the way the Studio renderer does."""
+    style = m.resolve_hook_style(edit.get("hook"))
+    family = str(style.get("fontFamily") or "")
+    try:
+        size, stroke = float(style.get("fontSize")), float(style.get("strokeWidth") or 0)
+    except (TypeError, ValueError) as e:
+        raise Unsupported(f"hook card size '{style.get('fontSize')}' is not a number") from e
+    if not (8 <= size <= 400) or not (0 <= stroke <= 60):
+        raise Unsupported(f"hook card size {size:g} px / outline {stroke:g} px is out of range for the fast renderer")
+    bg_value = str(style.get("background") or "").strip()
+    bg = None if bg_value.lower() in ("", "none", "transparent") else _color(bg_value, "hook card background")
+    return _HookLook(
+        family=family, size=size, uppercase=bool(style.get("uppercase", True)),
+        color=_color(str(style.get("color") or ""), "hook text colour"),
+        background=bg if bg is not None and bg.a > 0 else None,
+        stroke=stroke,
+        stroke_color=_color(str(style.get("strokeColor") or "#000000"), "hook outline colour") if stroke > 0 else Color(0, 0, 0),
+    )
 
 
 def _hook_text(edit: dict[str, Any]) -> Optional[str]:
@@ -424,18 +451,22 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: 
     dur_f = m.js_round(float((edit.get("hook") or {}).get("durationSec") or 0) * m.OUT_FPS)
     if dur_f <= 0:
         return
-    fnt = _need_font(HOOK_FONT, hook_lines(text), script.shaped)
+    look = _hook_look(edit)
+    texts = hook_lines(text, look.uppercase)
+    fnt = _need_font(look.family, texts, script.shaped)
     # a line is one event: libass orders its words, right to left when most of the hook's letters are
     rtl = script.shaped and bidi.base_direction([text]) == bidi.RTL
-    lines = [dataclasses.replace(_label(l, fnt, HOOK_FONT_SIZE, 0.0, script.shaped), rtl=rtl) for l in hook_lines(text)]
+    lines = [dataclasses.replace(_label(l, fnt, look.size, 0.0, script.shaped), rtl=rtl) for l in texts]
     widest = max(l.width for l in lines)
+    # padding (28 / 40), corners (32) and shadow were made for the 92 px card and scale with the text
+    u = look.size / m.HOOK_BASE_SIZE
     safe_zone = str(edit.get("safeZone") or "none")
-    fit = fit_scale(widest + 80, m.max_caption_width(safe_zone))
+    fit = fit_scale(widest + 80 * u, m.max_caption_width(safe_zone))
     zone = m.SAFE_ZONES.get(safe_zone) if safe_zone != "none" else None
     cy = m.clamp_to_safe_zone(0.3, zone, 0.2) * m.OUT_H
     cx = m.OUT_W / 2
-    line_h = HOOK_FONT_SIZE * 1.1
-    card_w, card_h = widest + 2 * 40, len(lines) * line_h + 2 * 28
+    line_h = look.size * 1.1
+    card_w, card_h = widest + 2 * 40 * u, len(lines) * line_h + 2 * 28 * u
 
     def state_at(n: int) -> tuple[float, float]:
         env = m.hook_envelope(n, dur_f)
@@ -452,10 +483,12 @@ def add_hook(script: Script, edit: dict[str, Any], total_frames: int, draw_dim: 
                 env, k = prev
                 if draw_dim:
                     script.rect(0, start, n, cx, m.OUT_H / 2, m.OUT_W, m.OUT_H, 0, HOOK_DIM, env)
-                script.rect(1, start, n, cx, cy + 10 * k, card_w * k, card_h * k, 32 * k, HOOK_SHADOW, env, blur=20 * k)
-                script.rect(2, start, n, cx, cy, card_w * k, card_h * k, 32 * k, HOOK_BG, env)
+                if look.background is not None:
+                    script.rect(1, start, n, cx, cy + 10 * u * k, card_w * k, card_h * k, 32 * u * k, HOOK_SHADOW, env, blur=20 * u * k)
+                    script.rect(2, start, n, cx, cy, card_w * k, card_h * k, 32 * u * k, look.background, env)
                 for i, line in enumerate(lines):
-                    script.text(3, start, n, fnt, line, cx, cy + (i - (len(lines) - 1) / 2) * line_h * k, HOOK_FONT_SIZE * k, WHITE, env)
+                    script.text(3, start, n, fnt, line, cx, cy + (i - (len(lines) - 1) / 2) * line_h * k, look.size * k, look.color, env,
+                                border=look.stroke / 2 * k, border_color=look.stroke_color if look.stroke > 0 else None)
             prev, start = cur, n
 
 
@@ -466,14 +499,15 @@ def build_script(edit: dict[str, Any], custom_styles: Sequence[dict[str, Any]], 
     # Decided for the whole script first: one file is drawn by one shaper, so when any text needs the
     # fallback font, every text is measured the way that shaper sets it.
     text = _hook_text(edit)
+    look = _hook_look(edit) if text is not None else None
     setup = _caption_setup(edit, custom_styles)
     script.shaped = bool(
-        (text is not None and _needs_fallback(HOOK_FONT, hook_lines(text)))
+        (look is not None and _needs_fallback(look.family, hook_lines(text, look.uppercase)))
         or (setup is not None and _needs_fallback(str(setup[0].get("fontFamily")), [_display(w, setup[0]) for w in setup[1]]))
     )
     # glyphs first: text no bundled font has is the reason to give, before anything is measured
-    if text is not None:
-        _need_font(HOOK_FONT, hook_lines(text), script.shaped)
+    if look is not None:
+        _need_font(look.family, hook_lines(text, look.uppercase), script.shaped)
     if setup is not None:
         _need_font(str(setup[0]["fontFamily"]), [_display(w, setup[0]) for w in setup[1]], script.shaped)
     add_hook(script, edit, total_frames, draw_dim)

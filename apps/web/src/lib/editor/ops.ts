@@ -230,7 +230,23 @@ export const setHook = (patch: Partial<EditState["hook"]>): Recipe => (d) => {
   Object.assign(d.hook, patch);
   d.hook.durationSec = clampNum(d.hook.durationSec, 0.5, 10);
 };
-export const setProgressBar = (patch: Partial<EditState["progressBar"]>): Recipe => (d) => {
+type HookOverrides = NonNullable<EditState["hook"]["overrides"]>;
+/** Pick a hook look; its earlier tweaks are dropped, as for caption presets. */
+export const setHookStyle = (styleId: string): Recipe => (d) => {
+  d.hook.styleId = styleId;
+  d.hook.overrides = {};
+};
+export const setHookOverride = <K extends keyof HookOverrides>(key: K, value: HookOverrides[K] | undefined): Recipe => (d) => {
+  const o = (d.hook.overrides ??= {}) as Record<string, unknown>;
+  if (value === undefined) delete o[key];
+  else if (key === "fontSize") o[key] = clampNum(Number(value), 40, 180);
+  else if (key === "strokeWidth") o[key] = clampNum(Number(value), 0, 24);
+  else o[key] = value;
+};
+export const resetHookOverrides = (): Recipe => (d) => {
+  d.hook.overrides = {};
+};
+export const setProgressBar =(patch: Partial<EditState["progressBar"]>): Recipe => (d) => {
   Object.assign(d.progressBar, patch);
 };
 export const setSafeZone = (zone: Provider | "none"): Recipe => (d) => {

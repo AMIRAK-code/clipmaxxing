@@ -1,4 +1,4 @@
-import type { CaptionStyle, EditState, LookId, Provider, VideoPiece, Word } from "./types";
+import type { CaptionStyle, EditState, HookStyle, LookId, Provider, VideoPiece, Word } from "./types";
 import { uid, wordsToCaptionWords } from "./timeline";
 import { emojiFor, heuristicEmphasis } from "./captions";
 
@@ -184,6 +184,106 @@ export const FALLBACK_FONT: { family: string; file: string; weight: number } = {
 /** CSS font-family value for text in `family`: the font, then the script fallback, then the system. */
 export function fontStack(family: string): string {
   return `"${family}", "${FALLBACK_FONT.family}", sans-serif`;
+}
+
+/**
+ * Looks for the hook title card. The first one is the card every clip had before styles existed, so an
+ * edit without a style id draws exactly as before. Backgrounds are opaque (or the original 0.92): the
+ * fast renderer draws the card's shadow under the card, where CSS hides it.
+ */
+export const HOOK_PRESETS: HookStyle[] = [
+  {
+    id: "purple-card",
+    name: "Purple Card",
+    fontFamily: "Montserrat",
+    fontSize: 92,
+    uppercase: true,
+    color: "#FFFFFF",
+    background: "rgba(124,58,237,0.92)",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+  },
+  {
+    id: "yellow-box",
+    name: "Yellow Box",
+    fontFamily: "Archivo Black",
+    fontSize: 84,
+    uppercase: true,
+    color: "#111111",
+    background: "#FFD60A",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+  },
+  {
+    id: "clean-white",
+    name: "Clean White",
+    fontFamily: "Inter",
+    fontSize: 80,
+    uppercase: false,
+    color: "#111111",
+    background: "#FFFFFF",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+  },
+  {
+    id: "midnight",
+    name: "Midnight",
+    fontFamily: "Poppins",
+    fontSize: 84,
+    uppercase: false,
+    color: "#FFFFFF",
+    background: "#0F172A",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+  },
+  {
+    id: "red-alert",
+    name: "Red Alert",
+    fontFamily: "Bebas Neue",
+    fontSize: 120,
+    uppercase: true,
+    color: "#FFFFFF",
+    background: "#E11D48",
+    strokeColor: "#000000",
+    strokeWidth: 0,
+  },
+  {
+    id: "outline",
+    name: "Outline",
+    fontFamily: "Anton",
+    fontSize: 116,
+    uppercase: true,
+    color: "#FFFFFF",
+    background: "transparent",
+    strokeColor: "#000000",
+    strokeWidth: 12,
+  },
+];
+
+export const DEFAULT_HOOK_STYLE_ID = "purple-card";
+
+/** Size the card's padding (28 / 40 px), corners (32) and shadow were made for. */
+export const HOOK_BASE_SIZE = 92;
+
+/** The hook card's style: its preset with the edit's overrides on top. */
+export function resolveHookStyle(hook: Pick<EditState["hook"], "styleId" | "overrides"> | null | undefined): HookStyle {
+  const found = HOOK_PRESETS.find((s) => s.id === hook?.styleId) ?? HOOK_PRESETS[0]!;
+  return { ...found, ...(hook?.overrides ?? {}) };
+}
+
+/** True for "transparent", "none", an empty value and rgba()/hsla()/#rrggbbaa with zero alpha. */
+export function isTransparent(color: string | null | undefined): boolean {
+  const c = (color ?? "").trim().toLowerCase();
+  if (c === "" || c === "transparent" || c === "none") return true;
+  // the alpha is the 4th comma-separated value, or what follows "/" in the space-separated form
+  const fn = /^(?:rgba?|hsla?)\((?:[^,]*,[^,]*,[^,]*,|[^/]*\/)\s*(-?\d*\.?\d+)%?\s*\)$/.exec(c);
+  if (fn) return Number(fn[1]) <= 0;
+  return /^#[0-9a-f]{6}00$/.test(c) || /^#[0-9a-f]{3}0$/.test(c);
+}
+
+/** Weight a bundled font is drawn in (each ships one); 700 for anything else. */
+export function fontWeightOf(family: string): number {
+  return FONT_FILES[family]?.[0]?.weight ?? 700;
 }
 
 export function resolveCaptionStyle(

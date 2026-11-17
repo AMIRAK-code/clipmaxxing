@@ -88,6 +88,26 @@ export interface CaptionStyle {
   emoji: boolean;
 }
 
+/**
+ * How the hook title card's text looks. Presets live in HOOK_PRESETS; an edit stores the preset id and
+ * the fields changed on top of it (EditState.hook.styleId / overrides), like caption styles.
+ */
+export interface HookStyle {
+  id: string;
+  name: string;
+  /** one of the bundled caption fonts (FONT_FILES); drawn in that font's only weight */
+  fontFamily: string;
+  /** px at 1080 wide; the card's padding, corners and shadow scale with it */
+  fontSize: number;
+  uppercase: boolean;
+  color: string;
+  /** the card behind the text, or "transparent" for text alone */
+  background: string;
+  strokeColor: string;
+  /** outline width in px, 0 = none */
+  strokeWidth: number;
+}
+
 export interface CaptionWord {
   id: string;
   /** display text – editing this never changes timing */
@@ -204,7 +224,15 @@ export interface EditState {
   texts: TextItem[];
   zooms: ZoomKey[];
   look: LookId;
-  hook: { enabled: boolean; text: string; durationSec: number };
+  hook: {
+    enabled: boolean;
+    text: string;
+    durationSec: number;
+    /** a HOOK_PRESETS id; absent = the original purple card */
+    styleId?: string;
+    /** fields changed on top of the preset */
+    overrides?: Partial<Omit<HookStyle, "id" | "name">>;
+  };
   progressBar: { enabled: boolean; color: string; position: "top" | "bottom"; height: number };
   volume: number;
   /** main-audio gain while a ducking item plays */
