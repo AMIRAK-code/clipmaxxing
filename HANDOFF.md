@@ -1,7 +1,7 @@
-# KLIPZ handoff (updated 2026-11-16, version 0.2.2)
+# KLIPZ handoff (updated 2026-11-17, version 0.2.3)
 
-Branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release), `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.2.2`
-(right-to-left captions in the fast renderer, see "New in v0.2.2").
+Branch `desktop-app` (PR #1 into `main`). Releases: `v0.1.0` (pre-release), `v0.1.1`, `v0.2.0`, `v0.2.1`, `v0.2.2`, `v0.2.3`
+(hook card styles, smarter Smart Edit cuts and clip boundaries, Montage, Manual AI Mode: see "New in v0.2.3").
 The owner runs the app from `dist\desktop\stage\KLIPZ.exe` (0.2.0, default data folder `%USERPROFILE%\.klipz`):
 never delete or rebuild that folder while it runs. Build with `KLIPZ_STAGE_DIR=dist/desktop/stage-next`.
 
@@ -131,7 +131,7 @@ their words correctly (it used to lay Persian words out left to right, in a syst
 - `convert-fonts.py` now writes the same bytes on every run; its first re-run rewrites the seven Latin TTFs
   once (timestamp only), which is why they were left untouched in this change.
 
-### New after v0.2.2: hook card text styles (not released yet)
+### New in v0.2.3: hook card text styles
 - Editor → Overlays → "Hook text style": six presets (`HOOK_PRESETS` in `packages/shared/src/presets.ts`:
   Purple Card = the old card, Yellow Box, Clean White, Midnight, Red Alert, Outline), then font (the seven
   bundled caption fonts, each in its one weight via `fontWeightOf()`), size 40-180, text colour, box on/off +
@@ -153,7 +153,7 @@ their words correctly (it used to lay Persian words out left to right, in a syst
   isolated data folder (choices show at once and survive a reload). Tests: `packages/shared/src/hook-style.test.ts`,
   `packages/video/src/hook-card.test.ts`, store test, `apps/worker/tests/test_hook_style.py`.
 
-### New after v0.2.2: Smart Edit cuts and clip boundaries (not released yet)
+### New in v0.2.3: Smart Edit cuts and clip boundaries
 - `smart_edit.keep_ranges`: pauses over 0.7 s are cut (was 0.45), keeping 0.28 s after speech and 0.15 s
   before it (was 0.12 both sides); cuts removing under 0.25 s are skipped; the air never reaches into a cut
   filler. On the owner's 33 min English video: 2,581 cuts -> 1,387, cuts closer than 0.2 s to a word 100 % -> 0.
@@ -165,7 +165,7 @@ their words correctly (it used to lay Persian words out left to right, in a syst
   `؟ ۔ 。` end sentences, Persian / Arabic / Urdu weak openers. Side effect: Smart Edit now emphasises
   Persian keywords like Latin ones (test_fastrender adjusted).
 
-### New after v0.2.2: Montage (not released yet)
+### New in v0.2.3: Montage
 Several uploaded videos -> their exciting scenes -> N short videos in random order (`/montage`).
 - Data: migration `0003_montage.sql`: `projects.kind` (`clips` | `montage`), `projects.options`
   (`{count, minSec, maxSec, poolInputs}`), `source_videos.role` (`input` | `pool`), `source_videos.scenes`.
@@ -203,7 +203,7 @@ Several uploaded videos -> their exciting scenes -> N short videos in random ord
   clip); montage scenes are found without an AI model (the AI scorer is not used); no thumbnails in the
   Scenes tab; the installer was not rebuilt.
 
-### New after v0.2.2: Manual AI Mode (not released yet)
+### New in v0.2.3: Manual AI Mode
 Engine choice after import, then "export for Gemini, paste its JSON back".
 - `projects.options.engine` (`builtin` | `manual`, absent = not asked yet). `engine-choice.tsx` (modal) shows
   on the project page when the video(s) are in, there are no clips and nothing is running; PATCH
