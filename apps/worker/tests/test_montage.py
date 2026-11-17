@@ -16,6 +16,7 @@ from klipz_worker.reframe.detect import Face, NoFaceDetector
 from klipz_worker.runner import JobContext
 from klipz_worker.steps import montage as M
 from klipz_worker.steps import render as render_step
+from klipz_worker.steps import segment as seg
 from klipz_worker.steps import transcribe as tr
 from klipz_worker.steps.features import AudioProfile
 from tests.conftest import add_source
@@ -134,6 +135,26 @@ def test_scenes_with_speech_start_and_end_between_words():
     assert any(abs(sp.start - (s - 0.1)) < 1e-6 for s in starts)          # just before a word starts
     assert any(abs(sp.end - (e + 0.15)) < 1e-6 for e in ends)             # just after a word ends
     assert sp.duration <= M.SCENE_SPEECH_MAX + 1e-6 and "insane!" in sp.text
+
+
+def test_a_speech_scene_does_not_start_on_the_tail_of_an_earlier_sentence():
+    words = []
+    t = 6.0
+    for tok in "Okay, so after all that waiting, here we go.".split():
+        words.append({"w": tok, "s": round(t, 2), "e": round(t + 0.3, 2)})
+        t += 0.4
+    t += 0.2
+    for tok in "Wow, this is absolutely incredible.".split():
+        words.append({"w": tok, "s": round(t, 2), "e": round(t + 0.3, 2)})
+        t += 0.4
+    sentences = seg.build_sentences(words)
+    # the moment at 9.0 s opens on "we go." of a sentence that began at 6.0 s
+    start, end, speech, text = M._grow(9.0, 30.0, words, sentences, [], None)
+    assert speech and text.startswith("Wow,") and text.endswith("incredible.")
+    assert abs(start - (9.8 - 0.1)) < 1e-6
+    # a sentence that began just before the moment is still included whole
+    start, _, _, text = M._grow(7.0, 30.0, words, sentences, [], None)
+    assert text.startswith("Okay,") and abs(start - (6.0 - 0.1)) < 1e-6
 
 
 def test_pool_gives_every_upload_its_share_and_keeps_upload_order():

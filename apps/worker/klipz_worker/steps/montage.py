@@ -142,6 +142,13 @@ def _grow(t: float, duration: float, words: Sequence[dict[str, Any]], sentences:
     if ws:
         first, last = ws[0], ws[-1]
         sent_first = next((s for s in sentences if s.s <= float(first["s"]) <= s.e), None)
+        if sent_first and sent_first.s < t - 1.5:
+            # the first words are the tail of a sentence that began well before ("...here we go."):
+            # start with the next sentence instead of on a stray fragment, when one starts in time
+            nxt = next((s for s in sentences if float(first["s"]) < s.s < t + WINDOW), None)
+            if nxt is not None:
+                ws = [w for w in ws if float(w["s"]) >= nxt.s - 1e-6] or ws
+                first, last, sent_first = ws[0], ws[-1], nxt
         start = sent_first.s if sent_first and sent_first.s >= t - 1.5 else float(first["s"])
         sent_last = next((s for s in sentences if s.s <= float(last["s"]) <= s.e), None)
         if sent_last and sent_last.e - start <= SCENE_SPEECH_MAX:
