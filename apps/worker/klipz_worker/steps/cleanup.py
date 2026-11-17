@@ -106,10 +106,11 @@ def cleanup(ctx: JobContext, now: Optional[float] = None) -> dict[str, Any]:
                     parts += 1
             except OSError:
                 pass
-    # 2b. folders left behind by a deleted project: Windows refuses to remove a file that is still open
-    #     (a video being imported or previewed), so the delete in the app can leave some
+    # 2b. folders left behind by a deleted project or clip: Windows refuses to remove a file that is still
+    #     open (a video being imported or previewed), so the delete in the app can leave some. Renders
+    #     whose row is gone (clip deleted, or replaced by a new analysis) are swept here too.
     orphans = 0
-    for kind, table in (("sources", "source_videos"), ("clips", "clips")):
+    for kind, table in (("sources", "source_videos"), ("clips", "clips"), ("renders", "renders")):
         base = root / kind
         if not base.is_dir():
             continue
