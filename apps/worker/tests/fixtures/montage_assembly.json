@@ -1,0 +1,436 @@
+[
+ {
+  "name": "five 10-20 s mixes",
+  "scenes": [
+   {
+    "id": "a1",
+    "input": "A",
+    "start": 1.0,
+    "end": 4.0,
+    "score": 80
+   },
+   {
+    "id": "a2",
+    "input": "A",
+    "start": 7.0,
+    "end": 9.5,
+    "score": 60
+   },
+   {
+    "id": "a3",
+    "input": "A",
+    "start": 12.0,
+    "end": 16.0,
+    "score": 40
+   },
+   {
+    "id": "b1",
+    "input": "B",
+    "start": 18.0,
+    "end": 21.0,
+    "score": 90
+   },
+   {
+    "id": "b2",
+    "input": "B",
+    "start": 23.0,
+    "end": 27.5,
+    "score": 30
+   },
+   {
+    "id": "c1",
+    "input": "C",
+    "start": 29.0,
+    "end": 31.5,
+    "score": 70
+   },
+   {
+    "id": "c2",
+    "input": "C",
+    "start": 33.0,
+    "end": 36.0,
+    "score": 50
+   }
+  ],
+  "count": 5,
+  "minSec": 10,
+  "maxSec": 20,
+  "seed": 12345,
+  "expected": [
+   [
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.5
+    },
+    {
+     "sceneId": "b2",
+     "srcStart": 23.0,
+     "srcEnd": 27.5
+    },
+    {
+     "sceneId": "c2",
+     "srcStart": 33.0,
+     "srcEnd": 36.0
+    },
+    {
+     "sceneId": "a3",
+     "srcStart": 12.0,
+     "srcEnd": 16.0
+    },
+    {
+     "sceneId": "b1",
+     "srcStart": 18.0,
+     "srcEnd": 21.0
+    },
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 4.0
+    }
+   ],
+   [
+    {
+     "sceneId": "c1",
+     "srcStart": 29.0,
+     "srcEnd": 31.5
+    },
+    {
+     "sceneId": "b1",
+     "srcStart": 18.0,
+     "srcEnd": 21.0
+    },
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.5
+    },
+    {
+     "sceneId": "c2",
+     "srcStart": 33.0,
+     "srcEnd": 36.0
+    },
+    {
+     "sceneId": "b2",
+     "srcStart": 23.0,
+     "srcEnd": 27.5
+    },
+    {
+     "sceneId": "a3",
+     "srcStart": 12.0,
+     "srcEnd": 16.0
+    }
+   ],
+   [
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 4.0
+    },
+    {
+     "sceneId": "c1",
+     "srcStart": 29.0,
+     "srcEnd": 31.5
+    },
+    {
+     "sceneId": "a3",
+     "srcStart": 12.0,
+     "srcEnd": 16.0
+    },
+    {
+     "sceneId": "c2",
+     "srcStart": 33.0,
+     "srcEnd": 36.0
+    },
+    {
+     "sceneId": "b2",
+     "srcStart": 23.0,
+     "srcEnd": 27.5
+    }
+   ],
+   [
+    {
+     "sceneId": "c1",
+     "srcStart": 29.0,
+     "srcEnd": 31.5
+    },
+    {
+     "sceneId": "b1",
+     "srcStart": 18.0,
+     "srcEnd": 21.0
+    },
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.5
+    },
+    {
+     "sceneId": "c2",
+     "srcStart": 33.0,
+     "srcEnd": 36.0
+    },
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 4.0
+    },
+    {
+     "sceneId": "b2",
+     "srcStart": 23.0,
+     "srcEnd": 27.5
+    }
+   ],
+   [
+    {
+     "sceneId": "b1",
+     "srcStart": 18.0,
+     "srcEnd": 21.0
+    },
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 4.0
+    },
+    {
+     "sceneId": "c1",
+     "srcStart": 29.0,
+     "srcEnd": 31.5
+    },
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.5
+    },
+    {
+     "sceneId": "c2",
+     "srcStart": 33.0,
+     "srcEnd": 36.0
+    }
+   ]
+  ]
+ },
+ {
+  "name": "short 5-8 s mixes",
+  "scenes": [
+   {
+    "id": "a1",
+    "input": "A",
+    "start": 1.0,
+    "end": 4.0,
+    "score": 80
+   },
+   {
+    "id": "a2",
+    "input": "A",
+    "start": 7.0,
+    "end": 9.5,
+    "score": 60
+   },
+   {
+    "id": "a3",
+    "input": "A",
+    "start": 12.0,
+    "end": 16.0,
+    "score": 40
+   },
+   {
+    "id": "b1",
+    "input": "B",
+    "start": 18.0,
+    "end": 21.0,
+    "score": 90
+   },
+   {
+    "id": "b2",
+    "input": "B",
+    "start": 23.0,
+    "end": 27.5,
+    "score": 30
+   },
+   {
+    "id": "c1",
+    "input": "C",
+    "start": 29.0,
+    "end": 31.5,
+    "score": 70
+   },
+   {
+    "id": "c2",
+    "input": "C",
+    "start": 33.0,
+    "end": 36.0,
+    "score": 50
+   }
+  ],
+  "count": 4,
+  "minSec": 5,
+  "maxSec": 8,
+  "seed": 777,
+  "expected": [
+   [
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 4.0
+    },
+    {
+     "sceneId": "b1",
+     "srcStart": 18.0,
+     "srcEnd": 21.0
+    },
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.0
+    }
+   ],
+   [
+    {
+     "sceneId": "c1",
+     "srcStart": 29.0,
+     "srcEnd": 31.5
+    },
+    {
+     "sceneId": "a3",
+     "srcStart": 12.0,
+     "srcEnd": 16.0
+    },
+    {
+     "sceneId": "c2",
+     "srcStart": 33.0,
+     "srcEnd": 34.5
+    }
+   ],
+   [
+    {
+     "sceneId": "b2",
+     "srcStart": 23.0,
+     "srcEnd": 27.5
+    },
+    {
+     "sceneId": "c1",
+     "srcStart": 29.0,
+     "srcEnd": 31.5
+    }
+   ],
+   [
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 4.0
+    },
+    {
+     "sceneId": "b2",
+     "srcStart": 23.0,
+     "srcEnd": 27.5
+    }
+   ]
+  ]
+ },
+ {
+  "name": "one upload only, with usage",
+  "scenes": [
+   {
+    "id": "a1",
+    "input": "A",
+    "start": 1.0,
+    "end": 4.0,
+    "score": 80
+   },
+   {
+    "id": "a2",
+    "input": "A",
+    "start": 7.0,
+    "end": 9.5,
+    "score": 60
+   },
+   {
+    "id": "a3",
+    "input": "A",
+    "start": 12.0,
+    "end": 16.0,
+    "score": 40
+   }
+  ],
+  "count": 2,
+  "minSec": 6,
+  "maxSec": 9,
+  "seed": 2024,
+  "usage": {
+   "a1": 2
+  },
+  "expected": [
+   [
+    {
+     "sceneId": "a3",
+     "srcStart": 12.0,
+     "srcEnd": 16.0
+    },
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.5
+    },
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 3.5
+    }
+   ],
+   [
+    {
+     "sceneId": "a3",
+     "srcStart": 12.0,
+     "srcEnd": 16.0
+    },
+    {
+     "sceneId": "a2",
+     "srcStart": 7.0,
+     "srcEnd": 9.5
+    },
+    {
+     "sceneId": "a1",
+     "srcStart": 1.0,
+     "srcEnd": 3.5
+    }
+   ]
+  ]
+ },
+ {
+  "name": "nothing fits: last scene trimmed",
+  "scenes": [
+   {
+    "id": "x",
+    "input": "A",
+    "start": 0.0,
+    "end": 5.0,
+    "score": 1
+   },
+   {
+    "id": "y",
+    "input": "B",
+    "start": 9.0,
+    "end": 14.0,
+    "score": 1
+   }
+  ],
+  "count": 1,
+  "minSec": 6,
+  "maxSec": 7,
+  "seed": 3,
+  "expected": [
+   [
+    {
+     "sceneId": "x",
+     "srcStart": 0.0,
+     "srcEnd": 5.0
+    },
+    {
+     "sceneId": "y",
+     "srcStart": 9.0,
+     "srcEnd": 11.0
+    }
+   ]
+  ]
+ }
+]

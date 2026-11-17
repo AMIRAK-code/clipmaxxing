@@ -244,7 +244,8 @@ export type JobType =
   | "render"
   | "autoclip"
   | "voiceover"
-  | "cleanup";
+  | "cleanup"
+  | "montage";
 
 export interface Job {
   id: string;
@@ -262,11 +263,51 @@ export interface Job {
   updated_at: string;
 }
 
+/** "clips": one video cut into clips; "montage": several videos mixed into short montages. */
+export type ProjectKind = "clips" | "montage";
+
+export interface MontageSettings {
+  /** how many montages to make */
+  count: number;
+  /** length range of each montage, seconds */
+  minSec: number;
+  maxSec: number;
+  /** random seed of the last mix (montages are reproducible) */
+  seed?: number;
+}
+
+export const MONTAGE_DEFAULTS: MontageSettings = { count: 5, minSec: 10, maxSec: 20 };
+export const MONTAGE_LIMITS = { count: [1, 20], sec: [5, 60], inputs: [2, 10] } as const;
+
 export interface Project {
   id: string;
   title: string;
+  kind: ProjectKind;
+  settings: MontageSettings | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A scene of a montage pool: where it came from and where it sits in the pool video. */
+export interface MontageScene {
+  id: string;
+  project_id: string;
+  input_source_id: string | null;
+  pool_source_id: string;
+  idx: number;
+  src_start: number;
+  src_end: number;
+  pool_start: number;
+  pool_end: number;
+  /** with the extra footage around the scene: how far it can be trimmed longer in the editor */
+  pool_min: number;
+  pool_max: number;
+  score: number;
+  breakdown: { audio?: number; motion?: number; speech?: number } | null;
+  text: string | null;
+  has_speech: number;
+  thumb_key: string | null;
+  input_name: string | null;
 }
 
 export interface SourceVideo {
@@ -286,6 +327,8 @@ export interface SourceVideo {
   error: string | null;
   /** how clips of this video are made vertical */
   framing: Framing;
+  /** "input": an uploaded video; "pool": the scene pool of a montage */
+  role?: "input" | "pool";
   scene_cuts: number[] | null;
   expires_at: string;
   created_at: string;

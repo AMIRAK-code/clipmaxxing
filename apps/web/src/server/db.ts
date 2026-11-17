@@ -103,6 +103,8 @@ export function parseJson<T>(row: Row | undefined, cols: string[]): T | undefine
 }
 
 export const JSON_COLS = {
+  projects: ["settings"],
+  montage_scenes: ["breakdown"],
   source_videos: ["scene_cuts", "energy"],
   transcripts: ["words", "segments", "speakers"],
   clips: ["score_breakdown", "crop_track", "edit_state"],

@@ -73,6 +73,8 @@ def _loads(row: Optional[sqlite3.Row], cols: Iterable[str]) -> Optional[Row]:
 
 
 JSON_COLS = {
+    "projects": ("settings",),
+    "montage_scenes": ("breakdown",),
     "source_videos": ("scene_cuts", "energy"),
     "transcripts": ("words", "segments", "speakers"),
     "clips": ("score_breakdown", "crop_track", "edit_state"),
